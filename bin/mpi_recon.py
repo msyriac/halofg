@@ -118,8 +118,10 @@ bin_edges = np.arange(0.,20.,Config.getfloat(analysis_section,"pixel_arcmin")*2.
 binner_dat = stats.bin2D(parray_dat.modrmap*60.*180./np.pi,bin_edges)
 binner_sim = stats.bin2D(parray_sim.modrmap*60.*180./np.pi,bin_edges)
 lxmap_dat,lymap_dat,modlmap_dat,angmap_dat,lx_dat,ly_dat = fmaps.get_ft_attributes_enmap(shape_dat,wcs_dat)
+lxmap_sim,lymap_sim,modlmap_sim,angmap_sim,lx_sim,ly_sim = fmaps.get_ft_attributes_enmap(shape_sim,wcs_sim)
 lbin_edges = np.arange(kellmin,kellmax,200)
 lbinner_dat = stats.bin2D(modlmap_dat,lbin_edges)
+lbinner_sim = stats.bin2D(modlmap_sim,lbin_edges)
 
 # === COSMOLOGY ===
 with io.nostdout():
@@ -234,12 +236,18 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
             lensed = lensing.lens_map_flat_pix(unlensed.copy(), alpha_pix.copy(),order=lens_order)
         cmb = enmap.downgrade(lensed,pixratio)
         #if rank==0 and k==0: aio.plot_powers(enmap.downgrade(unlensed,pixratio),cmb,parray_dat.modlmap,theory,lbinner_dat,out_dir)
+        hutt2d = fmaps.get_simple_power_enmap(unlensed)
+        hltt2d = fmaps.get_simple_power_enmap(lensed)
         utt2d = fmaps.get_simple_power_enmap(enmap.downgrade(unlensed,pixratio))
         ltt2d = fmaps.get_simple_power_enmap(cmb)
         ccents,utt = lbinner_dat.bin(utt2d)
         ccents,ltt = lbinner_dat.bin(ltt2d)
+        ccents,hutt = lbinner_sim.bin(hutt2d)
+        ccents,hltt = lbinner_sim.bin(hltt2d)
         mpibox.add_to_stats("ucl",utt)
         mpibox.add_to_stats("lcl",ltt)
+        mpibox.add_to_stats("hucl",hutt)
+        mpibox.add_to_stats("hlcl",hltt)
                 
 
 
@@ -346,22 +354,56 @@ if rank==0:
     ccents,iltt = lbinner_dat.bin(iltt2d)
     uclstats = mpibox.stats["ucl"]
     lclstats = mpibox.stats["lcl"]
+    huclstats = mpibox.stats["hucl"]
+    hlclstats = mpibox.stats["hlcl"]
 
     utt = uclstats['mean']
     ltt = lclstats['mean']
     utterr = uclstats['errmean']
     ltterr = lclstats['errmean']
     
+    hutt = huclstats['mean']
+    hltt = hlclstats['mean']
+    hutterr = huclstats['errmean']
+    hltterr = hlclstats['errmean']
+
+    
     pl = io.Plotter()
 
+    pdiff = (hutt-iutt)*100./iutt
+    perr = 100.*hutterr/iutt
+
+    pl.addErr(ccents,pdiff,yerr=perr,marker="x",ls="none",label="unlensed highres",alpha=0.5)
+
+    pdiff = (hltt-iltt)*100./iltt
+    perr = 100.*hltterr/iltt
+
+    pl.addErr(ccents+5,pdiff,yerr=perr,marker="o",ls="none",label="lensed highres",alpha=0.5)
+
+
+    
     pdiff = (utt-iutt)*100./iutt
     perr = 100.*utterr/iutt
 
-    pl.addErr(cents,pdiff,marker="x",ls="none",label="unlensed")
+    pl.addErr(ccents,pdiff,yerr=perr,marker="x",ls="none",label="unlensed")
 
     pdiff = (ltt-iltt)*100./iltt
     perr = 100.*ltterr/iltt
 
-    pl.addErr(cents,pdiff,marker="o",ls="none",label="lensed")
+    pl.addErr(ccents+5,pdiff,yerr=perr,marker="o",ls="none",label="lensed")
     pl.legendOn(labsize=10)
-    pl.done(out_dir+"uclpdiff.png")
+    pl._ax.axhline(y=0.,ls="--",color="k")
+    pl.done(out_dir+"clttpdiff.png")
+
+
+        
+    pl = io.Plotter(scaleY='log',scaleX='log')
+
+    pl.add(ccents,iutt*ccents**2.)
+    pl.addErr(ccents,utt*ccents**2.,yerr=utterr*ccents**2.,marker="x",ls="none",label="unlensed")
+
+    pl.add(ccents,iltt*ccents**2.)
+    pl.addErr(ccents,ltt*ccents**2.,yerr=ltterr*ccents**2.,marker="o",ls="none",label="lensed")
+
+    pl.legendOn(labsize=10)
+    pl.done(out_dir+"clttp.png")
