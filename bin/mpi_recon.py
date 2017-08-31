@@ -18,8 +18,19 @@ from ConfigParser import SafeConfigParser
 from szar.counts import ClusterCosmology
 import enlib.fft as fftfast
 from alhazen.halos import NFWkappa
+import argparse
 
 from mpi4py import MPI
+
+parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
+
+parser.add_argument("dirname", type=str,help='Directory name.')
+parser.add_argument("-N", "--nsim",     type=int,  default=None)
+
+args = parser.parse_args()
+dirname = args.dirname
+Nsims = args.nsim
+
 
 analysis_section = "analysis_arc"
 sim_section = "sims"
@@ -32,7 +43,6 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 numcores = comm.Get_size()    
 
-dirname = sys.argv[1]
 
 out_dir = os.environ['WWW']+"plots/"
 map_root = os.environ['WORK2']+'/data/sehgal/'
@@ -64,6 +74,12 @@ cmb_glob = cmb_glob[:Nmin]
 kappa_glob = kappa_glob[:Nmin]
 Ntot = Nmin
 
+
+if simulated_cmb and simulated_kappa and (Nsims is not None):
+    Ntot = Nsims
+    cmb_glob = [""]*Ntot
+    kappa_glob = [""]*Ntot
+
 num_each,each_tasks = mpi_distribute(Ntot,numcores)
 
 if rank==0: print "At most ", max(num_each) , " tasks..."
@@ -85,7 +101,7 @@ shape_sim, wcs_sim, shape_dat, wcs_dat = aio.enmaps_from_config(Config,sim_secti
 lmax,tellmin,tellmax,pellmin,pellmax,kellmin,kellmax = aio.ellbounds_from_config(Config,"reconstruction")
 parray_dat = aio.patch_array_from_config(Config,expf_name,shape_dat,wcs_dat,dimensionless=True)
 parray_sim = aio.patch_array_from_config(Config,expf_name,shape_sim,wcs_sim,dimensionless=True)
-bin_edges = np.arange(0.,20.,1.0)
+bin_edges = np.arange(0.,20.,Config.getfloat(analysis_section,"pixel_arcmin")*2.)
 binner_dat = stats.bin2D(parray_dat.modrmap*60.*180./np.pi,bin_edges)
 binner_sim = stats.bin2D(parray_sim.modrmap*60.*180./np.pi,bin_edges)
 lxmap_dat,lymap_dat,modlmap_dat,angmap_dat,lx_dat,ly_dat = fmaps.get_ft_attributes_enmap(shape_dat,wcs_dat)
@@ -176,9 +192,9 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
         if k==0:
             massOverh = 2.e14
             zL = 0.7
-            overdensity = 500.
-            critical = True
-            atClusterZ = True
+            overdensity = 180.
+            critical = False
+            atClusterZ = False
             concentration = 3.2
             comS = cc.results.comoving_radial_distance(cc.cmbZ)*cc.h
             comL = cc.results.comoving_radial_distance(zL)*cc.h

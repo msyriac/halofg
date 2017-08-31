@@ -24,7 +24,7 @@ for k,fname in enumerate(fnames):
     diff = (rec-inp)*100./inp
     differr = 100.*recerr/inp    
     pl.addErr(cents+(k-2)*0.1,diff,yerr=differr,marker="o",label=lab)
-pl.legendOn(labsize=10)
+pl.legendOn(labsize=8,loc="lower right")
 pl._ax.axhline(y=0.,ls="--")
 pl._ax.set_ylim(-10,10)
 pl._ax.set_xlim(0.,10.)
@@ -42,7 +42,7 @@ for k,fname in enumerate(fnames):
 
     diff = (rec-inp)/recerr
     pl.add(cents+(k-2)*0.1,diff,marker="o",label=lab,ls="-")
-pl.legendOn(labsize=10)
+pl.legendOn(labsize=8,loc="lower right")
 pl._ax.axhline(y=0.,ls="--")
 #pl._ax.set_ylim(-40,40)
 pl._ax.set_xlim(0.,10.)
