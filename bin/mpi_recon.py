@@ -1,6 +1,6 @@
 import numpy as np
 import sys, os, glob
-from orphics.analysis.pipeline import mpi_distribute
+from orphics.analysis.pipeline import mpi_distribute, MPIStats
 import orphics.tools.stats as stats
 import alhazen.io as aio
 import orphics.tools.io as io
@@ -17,73 +17,87 @@ import alhazen.lensTools as lt
 from ConfigParser import SafeConfigParser 
 from szar.counts import ClusterCosmology
 import enlib.fft as fftfast
-from alhazen.halos import NFWkappa
 import argparse
-
 from mpi4py import MPI
 
-parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
+# Runtime params that should be moved to command line
+analysis_section = "analysis"
+sim_section = "sims"
+expf_name = "experiment_simple"
 
+cluster = False
+simulated_cmb = True
+simulated_kappa = True
+periodic = True
+
+# Parse command line
+parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
 parser.add_argument("dirname", type=str,help='Directory name.')
 parser.add_argument("-N", "--nsim",     type=int,  default=None)
-
 args = parser.parse_args()
 dirname = args.dirname
 Nsims = args.nsim
 
 
-analysis_section = "analysis_arc"
-sim_section = "sims"
-
-simulated_cmb = True
-simulated_kappa = True
-periodic = True
-
+# Get MPI comm
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 numcores = comm.Get_size()    
 
 
-out_dir = os.environ['WWW']+"plots/"
-map_root = os.environ['WORK2']+'/data/sehgal/'
+# i/o directories
+out_dir = os.environ['WWW']+"plots/"  # for plots
+map_root = os.environ['WORK2']+'/data/sehgal/' # for map inputs
+save_dir = map_root + dirname # for saves
 
-save_dir = map_root + dirname
-
+# check for saved kappas and cmbs
 kappa_glob = sorted(glob.glob(save_dir+"/kappa*"))
 cmb_glob = sorted(glob.glob(save_dir+"/cmb*"))
 
-
-
+# How many did I find?
 Ntotk = len(kappa_glob)
 Ntotc = len(cmb_glob)
 
-if rank!=0:
-    comm.send(Ntotk,dest=0,tag=99)
-    comm.send(Ntotc,dest=0,tag=88)
-    Nmin = None
-else:
-    Ntotks = [Ntotk]
-    Ntotcs = [Ntotc]
-    for i in range(1,numcores):
-        Ntotks.append(comm.recv(source=i,tag=99))
-        Ntotcs.append(comm.recv(source=i,tag=88))
-    Nmin = min(min(Ntotks,Ntotcs))
-Nmin = comm.bcast(Nmin,root=0)
-if rank==0: print "Nmin : ", Nmin
-cmb_glob = cmb_glob[:Nmin]
-kappa_glob = kappa_glob[:Nmin]
-Ntot = Nmin
 
 
+# How many sims? Should I use saved files?
 if simulated_cmb and simulated_kappa and (Nsims is not None):
+    # If I'm simulating everything and Nsims is specified in the command line
     Ntot = Nsims
+    # No need to load saved file names
     cmb_glob = [""]*Ntot
     kappa_glob = [""]*Ntot
+else:
+    # If I need saved files or if Nsims is not specified, do
+    # as many as there are saved files.
+    # Directory might be being modified, so only use
+    # the lowest number found by all MPI cores
+    if rank!=0:
+        comm.send(Ntotk,dest=0,tag=99)
+        comm.send(Ntotc,dest=0,tag=88)
+        Nmin = None
+    else:
+        Ntotks = [Ntotk]
+        Ntotcs = [Ntotc]
+        for i in range(1,numcores):
+            Ntotks.append(comm.recv(source=i,tag=99))
+            Ntotcs.append(comm.recv(source=i,tag=88))
+        Nmin = min(min(Ntotks,Ntotcs))
+    Nmin = comm.bcast(Nmin,root=0)
+    if rank==0: print "Nmin : ", Nmin
+    cmb_glob = cmb_glob[:Nmin]
+    kappa_glob = kappa_glob[:Nmin]
+    Ntot = Nmin
 
+
+# Efficiently distribute sims over MPI cores
 num_each,each_tasks = mpi_distribute(Ntot,numcores)
+# Initialize a container for stats and stacks
+mpibox = MPIStats(comm,num_each,tag_start=333)
 
 if rank==0: print "At most ", max(num_each) , " tasks..."
 
+# What am I doing?
 my_tasks = each_tasks[rank]
 my_kappa_files = [kappa_glob[i] for i in my_tasks]
 my_cmb_files = [cmb_glob[i] for i in my_tasks]
@@ -95,7 +109,6 @@ Config = SafeConfigParser()
 Config.optionxform=str
 Config.read(iniFile)
 
-expf_name = "experiment_simple"
 pol = False
 shape_sim, wcs_sim, shape_dat, wcs_dat = aio.enmaps_from_config(Config,sim_section,analysis_section,pol=pol)    
 lmax,tellmin,tellmax,pellmin,pellmax,kellmin,kellmax = aio.ellbounds_from_config(Config,"reconstruction")
@@ -105,7 +118,8 @@ bin_edges = np.arange(0.,20.,Config.getfloat(analysis_section,"pixel_arcmin")*2.
 binner_dat = stats.bin2D(parray_dat.modrmap*60.*180./np.pi,bin_edges)
 binner_sim = stats.bin2D(parray_sim.modrmap*60.*180./np.pi,bin_edges)
 lxmap_dat,lymap_dat,modlmap_dat,angmap_dat,lx_dat,ly_dat = fmaps.get_ft_attributes_enmap(shape_dat,wcs_dat)
-
+lbin_edges = np.arange(kellmin,kellmax,200)
+lbinner_dat = stats.bin2D(modlmap_dat,lbin_edges)
 
 # === COSMOLOGY ===
 with io.nostdout():
@@ -116,13 +130,14 @@ with io.nostdout():
         logger.disabled = False
 parray_dat.add_cosmology(cc)
 theory = cc.theory
-gradCut = 2000
-TOnly = True
+gradCut = 2000 if cluster else 10000
 template_dat = fmaps.simple_flipper_template_from_enmap(shape_dat,wcs_dat)
 nT = parray_dat.nT
 nP = parray_dat.nP
+if rank==0: io.quickPlot2d(nT,out_dir+"nt.png")
 kbeam_dat = parray_dat.lbeam
 kbeampass = kbeam_dat
+if rank==0: io.quickPlot2d(kbeampass,out_dir+"kbeam.png")
 fMaskCMB_T = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=tellmin,lmax=tellmax)
 fMaskCMB_P = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=pellmin,lmax=pellmax)
 fMask = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=kellmin,lmax=kellmax)
@@ -141,7 +156,7 @@ with io.nostdout():
                      doCurl=False,
                      TOnly=not(pol),
                      halo=True,
-                     uEqualsL=False,
+                     uEqualsL=not(cluster),
                      gradCut=gradCut,verbose=False,
                      loadPickledNormAndFilters=None,
                      savePickledNormAndFilters=None)
@@ -166,10 +181,6 @@ if simulated_cmb or simulated_kappa:
 
 
 
-my_kappa1d_data = []
-my_kapparecon_data = []
-inp_kappa_stack = 0.
-recon_kappa_stack = 0.
 
 random = True if "random" in dirname else False
 
@@ -190,17 +201,25 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
         alpha_pix = enmap.grad_pixf(fphi)
     else:
         if k==0:
-            massOverh = 2.e14
-            zL = 0.7
-            overdensity = 180.
-            critical = False
-            atClusterZ = False
-            concentration = 3.2
-            comS = cc.results.comoving_radial_distance(cc.cmbZ)*cc.h
-            comL = cc.results.comoving_radial_distance(zL)*cc.h
-            winAtLens = (comS-comL)/comS
-            kappa,r500 = NFWkappa(cc,massOverh,concentration,zL,parray_sim.modrmap* 180.*60./np.pi,winAtLens,
-                                      overdensity=overdensity,critical=critical,atClusterZ=atClusterZ)
+
+            if cluster:
+                from alhazen.halos import NFWkappa
+
+                massOverh = 2.e14
+                zL = 0.7
+                overdensity = 180.
+                critical = False
+                atClusterZ = False
+                concentration = 3.2
+                comS = cc.results.comoving_radial_distance(cc.cmbZ)*cc.h
+                comL = cc.results.comoving_radial_distance(zL)*cc.h
+                winAtLens = (comS-comL)/comS
+                kappa,r500 = NFWkappa(cc,massOverh,concentration,zL,parray_sim.modrmap* 180.*60./np.pi,winAtLens,
+                                          overdensity=overdensity,critical=critical,atClusterZ=atClusterZ)
+
+            else:
+                kappa = parray_sim.get_kappa(ktype="grf",vary=False)
+
             phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
             alpha_pix = enmap.grad_pixf(fphi)
             
@@ -214,13 +233,20 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
         else:
             lensed = lensing.lens_map_flat_pix(unlensed.copy(), alpha_pix.copy(),order=lens_order)
         cmb = enmap.downgrade(lensed,pixratio)
+        #if rank==0 and k==0: aio.plot_powers(enmap.downgrade(unlensed,pixratio),cmb,parray_dat.modlmap,theory,lbinner_dat,out_dir)
+        utt2d = fmaps.get_simple_power_enmap(enmap.downgrade(unlensed,pixratio))
+        ltt2d = fmaps.get_simple_power_enmap(cmb)
+        ccents,utt = lbinner_dat.bin(utt2d)
+        ccents,ltt = lbinner_dat.bin(ltt2d)
+        mpibox.add_to_stats("ucl",utt)
+        mpibox.add_to_stats("lcl",ltt)
                 
 
 
-    kappa = fmaps.filter_map(kappa,kappa*0.+1.,parray_sim.modlmap,lowPass=kellmax,highPass=kellmin)
+    kappa = enmap.ndmap(fmaps.filter_map(kappa,kappa*0.+1.,parray_sim.modlmap,lowPass=kellmax,highPass=kellmin),wcs_sim)
     cents,kappa1d = binner_sim.bin(kappa)
-    my_kappa1d_data.append(kappa1d)
-    inp_kappa_stack += kappa
+    mpibox.add_to_stats("input_kappa1d",kappa1d)
+    mpibox.add_to_stack("input_kappa2d",kappa)
 
 
     measured = cmb * taper
@@ -229,12 +255,27 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
     qest.updateTEB_Y()
     with io.nostdout():
         rawkappa = qest.getKappa("TT").real
-    kappa_recon = rawkappa/(taper**2.)-meanfield
-    kappa_recon[parray_dat.modrmap*180.*60./np.pi>40.] = 0.
+
+    tapnorm = taper**2. if cluster else 1.
+    kappa_recon = enmap.ndmap(rawkappa/tapnorm-meanfield,wcs_dat)
+    if cluster: kappa_recon[parray_dat.modrmap*180.*60./np.pi>40.] = 0.
     #kappa_recon = fmaps.filter_map(kappa_recon,kappa_recon*0.+1.,parray_dat.modlmap,lowPass=kellmax,highPass=kellmin)
+
+    downk = enmap.downgrade(enmap.ndmap(kappa,wcs_sim),pixratio) 
+    cpower = fmaps.get_simple_power_enmap(enmap1=kappa_recon,enmap2=downk)/w2
+    apower = fmaps.get_simple_power_enmap(enmap1=kappa_recon)/w4
+    ipower = fmaps.get_simple_power_enmap(enmap1=downk)
+    lcents, cclkk = lbinner_dat.bin(cpower)
+    lcents, aclkk = lbinner_dat.bin(apower)
+    lcents, iclkk = lbinner_dat.bin(ipower)
+
+    
     cents,kapparecon1d = binner_dat.bin(kappa_recon)
-    my_kapparecon_data.append(kapparecon1d)
-    recon_kappa_stack += kappa_recon
+    mpibox.add_to_stats("recon_kappa1d",kapparecon1d)
+    mpibox.add_to_stats("cross",cclkk)
+    mpibox.add_to_stats("auto",aclkk)
+    mpibox.add_to_stats("ipower",iclkk)
+    mpibox.add_to_stack("recon_kappa2d",kappa_recon)
 
     if rank==0 and index==0:
         io.quickPlot2d(cmb,out_dir+"cmb.png")
@@ -243,48 +284,13 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
         io.quickPlot2d(kappa_recon,out_dir+"reconkappa.png")
 
 
-
-    
-
-my_kappa1d_data = np.array(my_kappa1d_data)
-my_kapparecon_data = np.array(my_kapparecon_data)
-if rank!=0:
-    assert my_kappa1d_data.shape==(num_each[rank],len(cents))
-    comm.Send(my_kappa1d_data, dest=0, tag=13)
-    comm.Send(my_kapparecon_data, dest=0, tag=14)
-    comm.Send(inp_kappa_stack, dest=0, tag=15)
-    comm.Send(recon_kappa_stack, dest=0, tag=16)
-else:
-
-    all_kappa1d_data = my_kappa1d_data
-    all_kapparecon_data = my_kapparecon_data
-    all_inpstack = inp_kappa_stack
-    all_reconstack = recon_kappa_stack
-    for core in range(1,numcores):
-        print "Waiting for core ", core , " / ", numcores
-        expected_shape = (num_each[core],len(cents))
-        data_vessel = np.empty(expected_shape, dtype=np.float64)
-        comm.Recv(data_vessel, source=core, tag=13)
-        all_kappa1d_data = np.append(all_kappa1d_data,data_vessel,axis=0)
-
-        data_vessel = np.empty(expected_shape, dtype=np.float64)
-        comm.Recv(data_vessel, source=core, tag=14)
-        all_kapparecon_data = np.append(all_kapparecon_data,data_vessel,axis=0)
+mpibox.get_stacks()
+mpibox.get_stats()
 
 
-        expected_shape = shape_sim
-        data_vessel = np.empty(expected_shape, dtype=np.float64)
-        comm.Recv(data_vessel, source=core, tag=15)
-        all_inpstack += data_vessel
-
-        expected_shape = shape_dat
-        data_vessel = np.empty(expected_shape, dtype=np.float64)
-        comm.Recv(data_vessel, source=core, tag=16)
-        all_reconstack += data_vessel
-
-
-    kappa_stats = stats.getStats(all_kappa1d_data)
-    kapparecon_stats = stats.getStats(all_kapparecon_data)
+if rank==0:
+    kappa_stats = mpibox.stats["input_kappa1d"]
+    kapparecon_stats = mpibox.stats["recon_kappa1d"]
 
     pl = io.Plotter()
     sgn = 1 if simulated_cmb else -1
@@ -300,10 +306,62 @@ else:
             
 
     io.quickPlot2d(stats.cov2corr(kappa_stats['cov']),out_dir+"kappa_corr.png")
-    io.quickPlot2d(all_inpstack/Ntot,out_dir+"inpstack.png")
-    io.quickPlot2d(all_reconstack/Ntot,out_dir+"reconstack.png")
-    inp = enmap.downgrade(enmap.ndmap(all_inpstack/Ntot,wcs_sim),pixratio) 
-    rec = all_reconstack/Ntot
-    pdiff = np.nan_to_num((inp-rec)*100./inp)
+    inpstack = mpibox.stacks["input_kappa2d"]
+    reconstack = mpibox.stacks["recon_kappa2d"]
+    io.quickPlot2d(inpstack,out_dir+"inpstack.png")
+    io.quickPlot2d(reconstack,out_dir+"reconstack.png")
+    inp = enmap.downgrade(enmap.ndmap(inpstack,wcs_sim),pixratio) 
+    pdiff = np.nan_to_num((inp-reconstack)*100./inp)
     io.quickPlot2d(pdiff,out_dir+"pdiffstack.png",lim=20.)
-    np.save(save_dir+"/reconstack",all_reconstack/Ntot)
+    np.save(save_dir+"/reconstack",reconstack)
+
+
+    cstats = mpibox.stats['cross']
+    istats = mpibox.stats['ipower']
+    astats = mpibox.stats['auto']
+    pl = io.Plotter(scaleY='log')
+    pl.addErr(lcents,cstats['mean'],yerr=cstats['errmean'],marker="o")
+    pl.add(lcents,istats['mean'],marker="x",ls="none")
+    lcents,nlkk = lbinner_dat.bin(qest.N.Nlkk['TT'])
+    ellrange = np.arange(2,kellmax,1)
+    clkk = theory.gCl("kk",ellrange)
+    pl.addErr(lcents,astats['mean'],yerr=astats['errmean'],marker="o",alpha=0.5)
+    pl.add(lcents,nlkk,ls="--")
+    pl.add(ellrange,clkk,color="k")
+    pl.done(out_dir+"cpower.png")
+
+    pl = io.Plotter()
+    ldiff = (cstats['mean']-istats['mean'])*100./istats['mean']
+    lerr = cstats['errmean']*100./istats['mean']
+    pl.addErr(lcents,ldiff,yerr=lerr,marker="o",ls="-")
+    pl._ax.axhline(y=0.,ls="--",color="k")
+    pl.done(out_dir+"powerdiff.png")
+
+
+    
+    
+    iutt2d = theory.uCl("TT",parray_dat.modlmap)
+    iltt2d = theory.lCl("TT",parray_dat.modlmap)
+    ccents,iutt = lbinner_dat.bin(iutt2d)
+    ccents,iltt = lbinner_dat.bin(iltt2d)
+    uclstats = mpibox.stats["ucl"]
+    lclstats = mpibox.stats["lcl"]
+
+    utt = uclstats['mean']
+    ltt = lclstats['mean']
+    utterr = uclstats['errmean']
+    ltterr = lclstats['errmean']
+    
+    pl = io.Plotter()
+
+    pdiff = (utt-iutt)*100./iutt
+    perr = 100.*utterr/iutt
+
+    pl.addErr(cents,pdiff,marker="x",ls="none",label="unlensed")
+
+    pdiff = (ltt-iltt)*100./iltt
+    perr = 100.*ltterr/iltt
+
+    pl.addErr(cents,pdiff,marker="o",ls="none",label="lensed")
+    pl.legendOn(labsize=10)
+    pl.done(out_dir+"uclpdiff.png")
