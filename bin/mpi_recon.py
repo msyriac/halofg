@@ -22,14 +22,14 @@ from mpi4py import MPI
 
 # Runtime params that should be moved to command line
 #analysis_section = "analysis"
-analysis_section = "analysis_arc"
+analysis_section = "analysis"
 sim_section = "sims"
 expf_name = "experiment_simple"
 
 cluster = True
-simulated_cmb = True
-simulated_kappa = True
-periodic = True
+simulated_cmb = False
+simulated_kappa = False
+periodic = False
 
 # Parse command line
 parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
@@ -324,14 +324,16 @@ if rank==0:
         pl.addErr(cents,sgn*kapparecon_stats['mean'],yerr=kapparecon_stats['errmean'],ls="--")
         pl.done(out_dir+"kappa1d.png")
 
-    if not(random):
-        filename = "/profiles_simcmb_"+str(simulated_cmb)+"_simkap_"+str(simulated_kappa)+"_periodic_"+str(periodic)+".txt"
-        np.savetxt(save_dir+filename,np.vstack((cents,kappa_stats['mean'],kappa_stats['errmean'],sgn*kapparecon_stats['mean'], \
-                                                kapparecon_stats['errmean'])).transpose(), \
-                   header="# bin centers (arc) , input_kappa, input_kappa_err, recon_kappa, recon_kappa_err")
-            
+    
+        if not(random):
+            filename = "/profiles_simcmb_"+str(simulated_cmb)+"_simkap_"+str(simulated_kappa)+"_periodic_"+str(periodic)+".txt"
+            np.savetxt(save_dir+filename,np.vstack((cents,kappa_stats['mean'],kappa_stats['errmean'],sgn*kapparecon_stats['mean'], \
+                                                    kapparecon_stats['errmean'])).transpose(), \
+                       header="# bin centers (arc) , input_kappa, input_kappa_err, recon_kappa, recon_kappa_err")
 
-    io.quickPlot2d(stats.cov2corr(kappa_stats['cov']),out_dir+"kappa_corr.png")
+
+        io.quickPlot2d(stats.cov2corr(kappa_stats['cov']),out_dir+"kappa_corr.png")
+        
     inpstack = mpibox.stacks["input_kappa2d"]
     reconstack = mpibox.stacks["recon_kappa2d"]
     io.quickPlot2d(inpstack,out_dir+"inpstack.png")
