@@ -1,0 +1,7 @@
+*.log
+*.png
+*.txt
+*.dat
+*.csv
+*.pyc
+*.hostfile
