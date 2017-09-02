@@ -22,14 +22,29 @@ from mpi4py import MPI
 
 # Runtime params that should be moved to command line
 #analysis_section = "analysis"
-analysis_section = "analysis"
-sim_section = "sims"
+# analysis_section = "analysis"
+# sim_section = "sims"
+# expf_name = "experiment_simple"
+
+
+
+analysis_section = "analysis_liu"
+sim_section = "sims_liu"
 expf_name = "experiment_simple"
 
-cluster = True
-simulated_cmb = False
+
+cluster = False
+liu = True
+simulated_cmb = True
 simulated_kappa = False
-periodic = False
+periodic = True
+
+
+# cluster = False
+# liu = False
+# simulated_cmb = True
+# simulated_kappa = True
+# periodic = True
 
 # Parse command line
 parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
@@ -62,7 +77,15 @@ Ntotc = len(cmb_glob)
 
 
 # How many sims? Should I use saved files?
-if simulated_cmb and simulated_kappa and (Nsims is not None):
+
+if liu:
+    from peakaboo.liuSims import LiuConvergence
+    assert simulated_cmb
+    assert not(simulated_kappa)
+    if Nsims is None: Nsims = 1000
+    liucon = LiuConvergence("/gpfs01/astro/workarea/msyriac/data/jiav2/massive/")
+    
+if (simulated_cmb and simulated_kappa and (Nsims is not None)) or liu:
     # If I'm simulating everything and Nsims is specified in the command line
     Ntot = Nsims
     # No need to load saved file names
@@ -200,9 +223,13 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
     k += 1
     if rank==0: print "Rank ", rank , " doing cutout ", index
     if not(simulated_kappa):
-        kappa = enmap.upgrade(enmap.ndmap(np.load(kappa_file),wcs_dat),pixratio)
-        phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
-        alpha_pix = enmap.grad_pixf(fphi)
+        if liu:
+            kappa = liucon.get_kappa(index+1)
+        else:
+            hikappa = enmap.ndmap(np.load(kappa_file),wcs_dat)
+            kappa = enmap.upgrade(hikappa,pixratio) if abs(pixratio-1.)>1.e-3 else hikappa
+        # phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
+        # alpha_pix = enmap.grad_pixf(fphi)
     else:
         if k==0:
 
@@ -224,9 +251,9 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
             else:
                 kappa = parray_sim.get_kappa(ktype="grf",vary=False)
 
-            phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
-            #alpha_pix = enmap.grad_pixf(fphi)
-            grad_phi = enmap.grad(phi)
+    phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
+    #alpha_pix = enmap.grad_pixf(fphi)
+    grad_phi = enmap.grad(phi)
             
 
     if not(simulated_cmb):
@@ -241,17 +268,15 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
             #lensed = lensing.lens_map_flat_pix(unlensed.copy(), alpha_pix.copy(),order=lens_order)
             lensed = lensing.lens_map(unlensed.copy(), grad_phi, order=lens_order, mode="spline", border="cyclic", trans=False, deriv=False, h=1e-7)
         if rank==0: print "Downsampling..."
-        cmb = enmap.ndmap(resample.resample_fft(lensed,shape_dat),wcs_dat)
-        #cmb = enmap.downgrade(lensed,pixratio)
-        #if rank==0 and k==0: aio.plot_powers(enmap.downgrade(unlensed,pixratio),cmb,parray_dat.modlmap,theory,lbinner_dat,out_dir)
+        cmb = lensed if abs(pixratio-1.)<1.e-3 else resample.resample_fft(lensed,shape_dat)
+        cmb = enmap.ndmap(cmb,wcs_dat)
         if not(cluster):
             if rank==0: print "Calculating powers for diagnostics..."
-            pxwindow =  fmaps.pixel_window_function(modlmap_dat,angmap_dat,px_dat,px_dat)
+            #pxwindow =  fmaps.pixel_window_function(modlmap_dat,angmap_dat,px_dat,px_dat)
             hutt2d = fmaps.get_simple_power_enmap(unlensed)
             hltt2d = fmaps.get_simple_power_enmap(lensed)
-            utt2d = fmaps.get_simple_power_enmap(enmap.ndmap(resample.resample_fft(unlensed,shape_dat),wcs_dat))
-            #utt2d = fmaps.get_simple_power_enmap(enmap.downgrade(unlensed,pixratio))/pxwindow**2.
-            ltt2d = fmaps.get_simple_power_enmap(cmb) #/pxwindow**2.
+            utt2d = fmaps.get_simple_power_enmap(enmap.ndmap(unlensed if abs(pixratio-1.)<1.e-3 else resample.resample_fft(unlensed,shape_dat),wcs_dat))
+            ltt2d = fmaps.get_simple_power_enmap(cmb)
             ccents,utt = lbinner_dat.bin(utt2d)
             ccents,ltt = lbinner_dat.bin(ltt2d)
             ccents,hutt = lbinner_sim.bin(hutt2d)
@@ -264,8 +289,9 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
 
     if rank==0: print "Filtering and binning input kappa..."
     kappa = enmap.ndmap(fmaps.filter_map(kappa,kappa*0.+1.,parray_sim.modlmap,lowPass=kellmax,highPass=kellmin),wcs_sim)
-    cents,kappa1d = binner_sim.bin(kappa)
-    mpibox.add_to_stats("input_kappa1d",kappa1d)
+    if cluster:
+        cents,kappa1d = binner_sim.bin(kappa)
+        mpibox.add_to_stats("input_kappa1d",kappa1d)
     mpibox.add_to_stack("input_kappa2d",kappa)
 
     if rank==0: print "Reconstructing..."
@@ -279,24 +305,30 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
     tapnorm = taper**2. if cluster else 1.
     kappa_recon = enmap.ndmap(np.nan_to_num(rawkappa/tapnorm)-meanfield,wcs_dat)
     if cluster: kappa_recon[parray_dat.modrmap*180.*60./np.pi>40.] = 0.
-    #kappa_recon = fmaps.filter_map(kappa_recon,kappa_recon*0.+1.,parray_dat.modlmap,lowPass=kellmax,highPass=kellmin)
+    kappa_recon = fmaps.filter_map(kappa_recon,kappa_recon*0.+1.,parray_dat.modlmap,lowPass=kellmax,highPass=kellmin)
 
     mpibox.add_to_stack("recon_kappa2d",kappa_recon)
     if not(cluster):
         if rank==0: print "Downsampling input kappa..."
-        downk = enmap.ndmap(resample.resample_fft(kappa,shape_dat),wcs_dat)  #enmap.downgrade(enmap.ndmap(kappa,wcs_sim),pixratio)
+        downk = enmap.ndmap(kappa  if abs(pixratio-1.)<1.e-3 else resample.resample_fft(kappa,shape_dat),wcs_dat)
         if rank==0: print "Calculating kappa powers and binning..."
+
+        
+
         cpower = fmaps.get_simple_power_enmap(enmap1=kappa_recon,enmap2=downk)/w2
         apower = fmaps.get_simple_power_enmap(enmap1=kappa_recon)/w4
         ipower = fmaps.get_simple_power_enmap(enmap1=downk)
+
+        
         lcents, cclkk = lbinner_dat.bin(cpower)
         lcents, aclkk = lbinner_dat.bin(apower)
         lcents, iclkk = lbinner_dat.bin(ipower)
 
 
+
         mpibox.add_to_stats("cross",cclkk)
-        mpibox.add_to_stats("auto",aclkk)
         mpibox.add_to_stats("ipower",iclkk)
+        mpibox.add_to_stats("auto",aclkk)
     else:
         cents,kapparecon1d = binner_dat.bin(kappa_recon)
         mpibox.add_to_stats("recon_kappa1d",kapparecon1d)
@@ -310,6 +342,17 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
 
 mpibox.get_stacks()
 mpibox.get_stats()
+
+
+# if rank==0:
+#     pl = io.Plotter(scaleY='log')
+#     ellrange = np.arange(2,3000,1)
+#     clkk = theory.gCl("kk",ellrange)
+#     pl.add(ellrange,clkk)
+#     for i in range(Nsims):
+#         iclkk = mpibox.vectors['ipower'][i,:]
+#         pl.add(lcents,iclkk,alpha=0.1)
+#     pl.done(out_dir+"clkk.png")
 
 
 if rank==0:
@@ -338,7 +381,7 @@ if rank==0:
     reconstack = mpibox.stacks["recon_kappa2d"]
     io.quickPlot2d(inpstack,out_dir+"inpstack.png")
     io.quickPlot2d(reconstack,out_dir+"reconstack.png")
-    inp = enmap.ndmap(resample.resample_fft(inpstack,shape_dat),wcs_dat) # enmap.downgrade(enmap.ndmap(inpstack,wcs_sim),pixratio) 
+    inp = enmap.ndmap(inpstack if abs(pixratio-1.)<1.e-3 else resample.resample_fft(inpstack,shape_dat),wcs_dat)
     pdiff = np.nan_to_num((inp-reconstack)*100./inp)
     io.quickPlot2d(pdiff,out_dir+"pdiffstack.png",lim=20.)
     np.save(save_dir+"/reconstack",reconstack)
