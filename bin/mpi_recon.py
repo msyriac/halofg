@@ -34,10 +34,18 @@ expf_name = "experiment_simple"
 
 
 cluster = False
-liu = True
-simulated_cmb = True
+liu = False
+sigurd = True
+simulated_cmb = False
 simulated_kappa = False
-periodic = True
+periodic = False
+
+
+# cluster = False
+# liu = True
+# simulated_cmb = True
+# simulated_kappa = False
+# periodic = True
 
 
 # cluster = False
@@ -50,9 +58,11 @@ periodic = True
 parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
 parser.add_argument("dirname", type=str,help='Directory name.')
 parser.add_argument("-N", "--nsim",     type=int,  default=None)
+parser.add_argument("-s", "--save",     type=str,  default=None)
 args = parser.parse_args()
 dirname = args.dirname
 Nsims = args.nsim
+save = args.save
 
 
 # Get MPI comm
@@ -65,6 +75,7 @@ numcores = comm.Get_size()
 out_dir = os.environ['WWW']+"plots/"  # for plots
 map_root = os.environ['WORK2']+'/data/sehgal/' # for map inputs
 save_dir = map_root + dirname # for saves
+if save is not None: save_func = lambda x: save_dir + "/"+save+"_"+str(x).zfill(9)+".fits"
 
 # check for saved kappas and cmbs
 kappa_glob = sorted(glob.glob(save_dir+"/kappa*"))
@@ -78,14 +89,23 @@ Ntotc = len(cmb_glob)
 
 # How many sims? Should I use saved files?
 
+if sigurd:
+    assert not(liu)
+    assert not(simulated_cmb)
+    assert not(simulated_kappa)
+    assert not(periodic)
+    if Nsims is None: Nsims = 320
+    sigurd_cmb_file = lambda x: "/gpfs01/astro/workarea/msyriac/data/sigurd_sims/cori/equator_curved_lensed_car_"+str(x)+".fits"
+    sigurd_phi_file = lambda x: "/gpfs01/astro/workarea/msyriac/data/sigurd_sims/cori/equator_curved_phi_car_"+str(x)+".fits"
+
 if liu:
     from peakaboo.liuSims import LiuConvergence
     assert simulated_cmb
     assert not(simulated_kappa)
     if Nsims is None: Nsims = 1000
-    liucon = LiuConvergence("/gpfs01/astro/workarea/msyriac/data/jiav2/massive/")
+    liucon = LiuConvergence("/gpfs01/astro/workarea/msyriac/data/jiav2/massless/")
     
-if (simulated_cmb and simulated_kappa and (Nsims is not None)) or liu:
+if (simulated_cmb and simulated_kappa and (Nsims is not None)) or liu or sigurd:
     # If I'm simulating everything and Nsims is specified in the command line
     Ntot = Nsims
     # No need to load saved file names
@@ -225,6 +245,8 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
     if not(simulated_kappa):
         if liu:
             kappa = liucon.get_kappa(index+1)
+        elif sigurd:
+            phi = enmap.read_map(sigurd_phi_file(index))
         else:
             hikappa = enmap.ndmap(np.load(kappa_file),wcs_dat)
             kappa = enmap.upgrade(hikappa,pixratio) if abs(pixratio-1.)>1.e-3 else hikappa
@@ -251,13 +273,17 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
             else:
                 kappa = parray_sim.get_kappa(ktype="grf",vary=False)
 
-    phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
-    #alpha_pix = enmap.grad_pixf(fphi)
-    grad_phi = enmap.grad(phi)
+    if simulated_cmb:
+        phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
+        #alpha_pix = enmap.grad_pixf(fphi)
+        grad_phi = enmap.grad(phi)
             
 
     if not(simulated_cmb):
-        cmb = np.load(cmb_file) / 1.072480e+09
+        if sigurd:
+            cmb = enmap.read_map(sigurd_cmb_file(index))
+        else:
+            cmb = np.load(cmb_file) / 1.072480e+09
     else:
         if rank==0: print "Generating unlensed CMB..."
         unlensed = parray_sim.get_unlensed_cmb(seed=index)
@@ -305,8 +331,8 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
     tapnorm = taper**2. if cluster else 1.
     kappa_recon = enmap.ndmap(np.nan_to_num(rawkappa/tapnorm)-meanfield,wcs_dat)
     if cluster: kappa_recon[parray_dat.modrmap*180.*60./np.pi>40.] = 0.
-    kappa_recon = fmaps.filter_map(kappa_recon,kappa_recon*0.+1.,parray_dat.modlmap,lowPass=kellmax,highPass=kellmin)
-
+    kappa_recon = enmap.ndmap(fmaps.filter_map(kappa_recon,kappa_recon*0.+1.,parray_dat.modlmap,lowPass=kellmax,highPass=kellmin),wcs_dat)
+    if save is not None: enmap.write_fits(save_func(index),kappa_recon)
     mpibox.add_to_stack("recon_kappa2d",kappa_recon)
     if not(cluster):
         if rank==0: print "Downsampling input kappa..."
