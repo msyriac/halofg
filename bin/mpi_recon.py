@@ -22,23 +22,26 @@ from mpi4py import MPI
 
 # Runtime params that should be moved to command line
 #analysis_section = "analysis"
-# analysis_section = "analysis"
-# sim_section = "sims"
-# expf_name = "experiment_simple"
-
-
-
-analysis_section = "analysis_liu"
-sim_section = "sims_liu"
+analysis_section = "analysis_arc"
+sim_section = "sims"
 expf_name = "experiment_simple"
+cosmology_section = "cc_cluster"
 
 
-cluster = False
-liu = False
-sigurd = True
-simulated_cmb = False
-simulated_kappa = False
-periodic = False
+
+# analysis_section = "analysis_sigurd"
+# sim_section = "sims_sigurd"
+# expf_name = "experiment_simple"
+# cosmology_section = "cc_sigurd"
+#cosmology_section = "cc_default"
+
+# cluster = False
+# liu = False
+# sigurd = True
+# meanfield_sub = False
+# simulated_cmb = False
+# simulated_kappa = False
+# periodic = False
 
 
 # cluster = False
@@ -48,11 +51,12 @@ periodic = False
 # periodic = True
 
 
-# cluster = False
-# liu = False
-# simulated_cmb = True
-# simulated_kappa = True
-# periodic = True
+cluster = True
+liu = False
+sigurd = False
+simulated_cmb = True
+simulated_kappa = True
+periodic = True
 
 # Parse command line
 parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
@@ -95,8 +99,10 @@ if sigurd:
     assert not(simulated_kappa)
     assert not(periodic)
     if Nsims is None: Nsims = 320
-    sigurd_cmb_file = lambda x: "/gpfs01/astro/workarea/msyriac/data/sigurd_sims/cori/equator_curved_lensed_car_"+str(x)+".fits"
-    sigurd_phi_file = lambda x: "/gpfs01/astro/workarea/msyriac/data/sigurd_sims/cori/equator_curved_phi_car_"+str(x)+".fits"
+    #sigurd_cmb_file = lambda x: "/gpfs01/astro/workarea/msyriac/data/sigurd_sims/cori/equator_curved_lensed_car_"+str(x).zfill(2)+".fits"
+    #sigurd_phi_file = lambda x: "/gpfs01/astro/workarea/msyriac/data/sigurd_sims/cori/equator_curved_phi_car_"+str(x).zfill(2)+".fits"
+    sigurd_cmb_file = lambda x: "/gpfs01/astro/workarea/msyriac/data/sigurd_sims/cori/v2/equator_curved_lensed_car_"+str(x).zfill(2)+".fits"
+    sigurd_kappa_file = lambda x: "/gpfs01/astro/workarea/msyriac/data/sigurd_sims/cori/v2/equator_curved_kappa_car_"+str(x).zfill(2)+".fits"
 
 if liu:
     from peakaboo.liuSims import LiuConvergence
@@ -154,11 +160,19 @@ Config.optionxform=str
 Config.read(iniFile)
 
 pol = False
-shape_sim, wcs_sim, shape_dat, wcs_dat = aio.enmaps_from_config(Config,sim_section,analysis_section,pol=pol)    
-lmax,tellmin,tellmax,pellmin,pellmax,kellmin,kellmax = aio.ellbounds_from_config(Config,"reconstruction")
+shape_sim, wcs_sim, shape_dat, wcs_dat = aio.enmaps_from_config(Config,sim_section,analysis_section,pol=pol)
+analysis_resolution =  np.min(enmap.extent(shape_dat,wcs_dat)/shape_dat[-2:])*60.*180./np.pi
+min_ell = fmaps.minimum_ell(shape_dat,wcs_dat)
+lb = aio.ellbounds_from_config(Config,"reconstruction",min_ell)
+tellmin = lb['tellminY']
+tellmax = lb['tellmaxY']
+pellmin = lb['pellminY']
+pellmax = lb['pellmaxY']
+kellmin = lb['kellmin']
+kellmax = lb['kellmax']
 parray_dat = aio.patch_array_from_config(Config,expf_name,shape_dat,wcs_dat,dimensionless=True)
 parray_sim = aio.patch_array_from_config(Config,expf_name,shape_sim,wcs_sim,dimensionless=True)
-bin_edges = np.arange(0.,20.,Config.getfloat(analysis_section,"pixel_arcmin")*2.)
+bin_edges = np.arange(0.,20.,analysis_resolution*2.)
 binner_dat = stats.bin2D(parray_dat.modrmap*60.*180./np.pi,bin_edges)
 binner_sim = stats.bin2D(parray_sim.modrmap*60.*180./np.pi,bin_edges)
 lxmap_dat,lymap_dat,modlmap_dat,angmap_dat,lx_dat,ly_dat = fmaps.get_ft_attributes_enmap(shape_dat,wcs_dat)
@@ -168,14 +182,9 @@ lbinner_dat = stats.bin2D(modlmap_dat,lbin_edges)
 lbinner_sim = stats.bin2D(modlmap_sim,lbin_edges)
 
 # === COSMOLOGY ===
-with io.nostdout():
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        logger.disabled = True
-        cc = ClusterCosmology(lmax=lmax,pickling=True)
-        logger.disabled = False
-parray_dat.add_cosmology(cc)
-theory = cc.theory
+theory, cc, lmax = aio.theory_from_config(Config,cosmology_section)
+if cluster: assert cc is not None
+parray_dat.add_theory(theory,lmax)
 gradCut = 2000 if cluster else 10000
 template_dat = fmaps.simple_flipper_template_from_enmap(shape_dat,wcs_dat)
 nT = parray_dat.nT
@@ -190,7 +199,7 @@ fMask = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=kellmin,lmax=kellmax)
 
 with io.nostdout():
     qest = Estimator(template_dat,
-                     cc.theory,
+                     theory,
                      theorySpectraForNorm=None,
                      noiseX2dTEB=[nT,nP,nP],
                      noiseY2dTEB=[nT,nP,nP],
@@ -207,23 +216,26 @@ with io.nostdout():
                      loadPickledNormAndFilters=None,
                      savePickledNormAndFilters=None)
 
-taper_percent = 12.0 if not(periodic) else 0.
-pad_percent = 4.0 if not(periodic) else 0.
+    
+taper_percent = 30.0 if not(periodic) else 0.
+pad_percent = 10.0 if not(periodic) else 0.
+# taper_percent = 12.0 if not(periodic) else 0.
+# pad_percent = 4.0 if not(periodic) else 0.
 Ny,Nx = shape_dat
 taper = fmaps.cosineWindow(Ny,Nx,lenApodY=int(taper_percent*min(Ny,Nx)/100.),lenApodX=int(taper_percent*min(Ny,Nx)/100.),padY=int(pad_percent*min(Ny,Nx)/100.),padX=int(pad_percent*min(Ny,Nx)/100.))
 w2 = np.mean(taper**2.)
+w3 = np.mean(taper**3.)
 w4 = np.mean(taper**4.)
 if rank==0:
     io.quickPlot2d(taper,out_dir+"taper.png")
     print "w2 : " , w2
 
-
-pixratio = Config.getfloat(analysis_section,"pixel_arcmin")/Config.getfloat(sim_section,"pixel_arcmin")
-px_dat = Config.getfloat(analysis_section,"pixel_arcmin")
+pixratio = analysis_resolution/Config.getfloat(sim_section,"pixel_arcmin")
+px_dat = analysis_resolution
 if simulated_cmb or simulated_kappa:
     lens_order = Config.getint(sim_section,"lens_order")
     parray_sim = aio.patch_array_from_config(Config,expf_name,shape_sim,wcs_sim,dimensionless=True)
-    parray_sim.add_cosmology(cc)
+    parray_sim.add_theory(theory,lmax)
 
 
 
@@ -231,7 +243,7 @@ if simulated_cmb or simulated_kappa:
 
 random = True if "random" in dirname else False
 
-if random or periodic:
+if random or periodic or not(meanfield_sub):
     meanfield = 0.
 else:
     meanfield = np.load("/gpfs01/astro/workarea/msyriac/data/sehgal/randoms_15041256892/reconstack.npy")
@@ -246,7 +258,12 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
         if liu:
             kappa = liucon.get_kappa(index+1)
         elif sigurd:
-            phi = enmap.read_map(sigurd_phi_file(index))
+            kappa = enmap.read_map(sigurd_kappa_file(index))*taper
+            #phi = enmap.read_map(sigurd_phi_file(index))
+            #fkphi = fftfast.fft(phi*taper,axes=[-2,-1])
+            #lmap = parray_sim.modlmap
+            #fkkappa = fkphi * lmap * (lmap+1.)/2.
+            #kappa = fftfast.ifft(fkkappa,axes=[-2,-1],normalize=True)
         else:
             hikappa = enmap.ndmap(np.load(kappa_file),wcs_dat)
             kappa = enmap.upgrade(hikappa,pixratio) if abs(pixratio-1.)>1.e-3 else hikappa
@@ -281,7 +298,10 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
 
     if not(simulated_cmb):
         if sigurd:
-            cmb = enmap.read_map(sigurd_cmb_file(index))
+            cmb = enmap.read_map(sigurd_cmb_file(index))[0]/2.7255e6
+            ltt2d = fmaps.get_simple_power_enmap(cmb*taper)
+            ccents,ltt = lbinner_dat.bin(ltt2d)/w2
+            mpibox.add_to_stats("lcl",ltt)
         else:
             cmb = np.load(cmb_file) / 1.072480e+09
     else:
@@ -299,10 +319,10 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
         if not(cluster):
             if rank==0: print "Calculating powers for diagnostics..."
             #pxwindow =  fmaps.pixel_window_function(modlmap_dat,angmap_dat,px_dat,px_dat)
-            hutt2d = fmaps.get_simple_power_enmap(unlensed)
-            hltt2d = fmaps.get_simple_power_enmap(lensed)
-            utt2d = fmaps.get_simple_power_enmap(enmap.ndmap(unlensed if abs(pixratio-1.)<1.e-3 else resample.resample_fft(unlensed,shape_dat),wcs_dat))
-            ltt2d = fmaps.get_simple_power_enmap(cmb)
+            hutt2d = fmaps.get_simple_power_enmap(unlensed*taper)/w2
+            hltt2d = fmaps.get_simple_power_enmap(lensed*taper)/w2
+            utt2d = fmaps.get_simple_power_enmap(enmap.ndmap(unlensed*taper if abs(pixratio-1.)<1.e-3 else resample.resample_fft(unlensed*taper,shape_dat),wcs_dat))/w2
+            ltt2d = fmaps.get_simple_power_enmap(cmb*taper)/w2
             ccents,utt = lbinner_dat.bin(utt2d)
             ccents,ltt = lbinner_dat.bin(ltt2d)
             ccents,hutt = lbinner_sim.bin(hutt2d)
@@ -314,11 +334,14 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
                 
 
     if rank==0: print "Filtering and binning input kappa..."
+    #if not(sigurd):
     kappa = enmap.ndmap(fmaps.filter_map(kappa,kappa*0.+1.,parray_sim.modlmap,lowPass=kellmax,highPass=kellmin),wcs_sim)
     if cluster:
         cents,kappa1d = binner_sim.bin(kappa)
         mpibox.add_to_stats("input_kappa1d",kappa1d)
+    #if not(sigurd):
     mpibox.add_to_stack("input_kappa2d",kappa)
+    
 
     if rank==0: print "Reconstructing..."
     measured = cmb * taper
@@ -335,16 +358,23 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
     if save is not None: enmap.write_fits(save_func(index),kappa_recon)
     mpibox.add_to_stack("recon_kappa2d",kappa_recon)
     if not(cluster):
-        if rank==0: print "Downsampling input kappa..."
-        downk = enmap.ndmap(kappa  if abs(pixratio-1.)<1.e-3 else resample.resample_fft(kappa,shape_dat),wcs_dat)
-        if rank==0: print "Calculating kappa powers and binning..."
+        apower = fmaps.get_simple_power_enmap(enmap1=kappa_recon)/w4
+
+
+        if True: #not(sigurd):
+            if rank==0: print "Downsampling input kappa..."
+            downk = enmap.ndmap(kappa  if abs(pixratio-1.)<1.e-3 else resample.resample_fft(kappa,shape_dat),wcs_dat)
+            if rank==0: print "Calculating kappa powers and binning..."
 
         
 
-        cpower = fmaps.get_simple_power_enmap(enmap1=kappa_recon,enmap2=downk)/w2
-        apower = fmaps.get_simple_power_enmap(enmap1=kappa_recon)/w4
-        ipower = fmaps.get_simple_power_enmap(enmap1=downk)
-
+            cpower = fmaps.get_simple_power_enmap(enmap1=kappa_recon,enmap2=downk)/w3
+            ipower = fmaps.get_simple_power_enmap(enmap1=downk)/w2
+        # else:
+        #     lmap = parray_dat.modlmap
+        #     cpower = fmaps.get_simple_power_enmap(enmap1=kappa_recon,enmap2=phi*taper)*(lmap*(lmap+1.)/2.)/w3
+        #     ipower = fmaps.get_simple_power_enmap(enmap1=phi*taper)*(lmap*(lmap+1.)/2.)**2./w2
+                
         
         lcents, cclkk = lbinner_dat.bin(cpower)
         lcents, aclkk = lbinner_dat.bin(apower)
@@ -362,6 +392,7 @@ for index,kappa_file,cmb_file in zip(my_tasks,my_kappa_files,my_cmb_files):
     if rank==0 and index==0:
         io.quickPlot2d(cmb,out_dir+"cmb.png")
         io.quickPlot2d(measured,out_dir+"mcmb.png")
+        #if not(sigurd):
         io.quickPlot2d(kappa,out_dir+"inpkappa.png")
         io.quickPlot2d(kappa_recon,out_dir+"reconkappa.png")
 
@@ -403,13 +434,14 @@ if rank==0:
 
         io.quickPlot2d(stats.cov2corr(kappa_stats['cov']),out_dir+"kappa_corr.png")
         
-    inpstack = mpibox.stacks["input_kappa2d"]
     reconstack = mpibox.stacks["recon_kappa2d"]
-    io.quickPlot2d(inpstack,out_dir+"inpstack.png")
     io.quickPlot2d(reconstack,out_dir+"reconstack.png")
-    inp = enmap.ndmap(inpstack if abs(pixratio-1.)<1.e-3 else resample.resample_fft(inpstack,shape_dat),wcs_dat)
-    pdiff = np.nan_to_num((inp-reconstack)*100./inp)
-    io.quickPlot2d(pdiff,out_dir+"pdiffstack.png",lim=20.)
+    if not(sigurd):
+        inpstack = mpibox.stacks["input_kappa2d"]
+        io.quickPlot2d(inpstack,out_dir+"inpstack.png")
+        inp = enmap.ndmap(inpstack if abs(pixratio-1.)<1.e-3 else resample.resample_fft(inpstack,shape_dat),wcs_dat)
+        pdiff = np.nan_to_num((inp-reconstack)*100./inp)
+        io.quickPlot2d(pdiff,out_dir+"pdiffstack.png",lim=20.)
     np.save(save_dir+"/reconstack",reconstack)
 
 
@@ -441,40 +473,41 @@ if rank==0:
         iltt2d = theory.lCl("TT",parray_dat.modlmap)
         ccents,iutt = lbinner_dat.bin(iutt2d)
         ccents,iltt = lbinner_dat.bin(iltt2d)
-        uclstats = mpibox.stats["ucl"]
+        if not(sigurd): uclstats = mpibox.stats["ucl"]
         lclstats = mpibox.stats["lcl"]
-        huclstats = mpibox.stats["hucl"]
-        hlclstats = mpibox.stats["hlcl"]
+        if not(sigurd): huclstats = mpibox.stats["hucl"]
+        if not(sigurd): hlclstats = mpibox.stats["hlcl"]
 
-        utt = uclstats['mean']
+        if not(sigurd): utt = uclstats['mean']
         ltt = lclstats['mean']
-        utterr = uclstats['errmean']
+        if not(sigurd): utterr = uclstats['errmean']
         ltterr = lclstats['errmean']
 
-        hutt = huclstats['mean']
-        hltt = hlclstats['mean']
-        hutterr = huclstats['errmean']
-        hltterr = hlclstats['errmean']
+        if not(sigurd): hutt = huclstats['mean']
+        if not(sigurd): hltt = hlclstats['mean']
+        if not(sigurd): hutterr = huclstats['errmean']
+        if not(sigurd): hltterr = hlclstats['errmean']
 
 
         pl = io.Plotter()
 
-        pdiff = (hutt-iutt)*100./iutt
-        perr = 100.*hutterr/iutt
+        if not(sigurd):
+            pdiff = (hutt-iutt)*100./iutt
+            perr = 100.*hutterr/iutt
 
-        pl.addErr(ccents-50,pdiff,yerr=perr,marker="x",ls="none",label="unlensed highres",alpha=0.5)
+            pl.addErr(ccents-50,pdiff,yerr=perr,marker="x",ls="none",label="unlensed highres",alpha=0.5)
 
-        pdiff = (hltt-iltt)*100./iltt
-        perr = 100.*hltterr/iltt
+            pdiff = (hltt-iltt)*100./iltt
+            perr = 100.*hltterr/iltt
 
-        pl.addErr(ccents-25,pdiff,yerr=perr,marker="o",ls="none",label="lensed highres",alpha=0.5)
+            pl.addErr(ccents-25,pdiff,yerr=perr,marker="o",ls="none",label="lensed highres",alpha=0.5)
 
 
 
-        pdiff = (utt-iutt)*100./iutt
-        perr = 100.*utterr/iutt
+            pdiff = (utt-iutt)*100./iutt
+            perr = 100.*utterr/iutt
 
-        pl.addErr(ccents+25,pdiff,yerr=perr,marker="x",ls="none",label="unlensed")
+            pl.addErr(ccents+25,pdiff,yerr=perr,marker="x",ls="none",label="unlensed")
 
         pdiff = (ltt-iltt)*100./iltt
         perr = 100.*ltterr/iltt
@@ -488,8 +521,9 @@ if rank==0:
 
         pl = io.Plotter(scaleY='log',scaleX='log')
 
-        pl.add(ccents,iutt*ccents**2.)
-        pl.addErr(ccents,utt*ccents**2.,yerr=utterr*ccents**2.,marker="x",ls="none",label="unlensed")
+        if not(sigurd):
+            pl.add(ccents,iutt*ccents**2.)
+            pl.addErr(ccents,utt*ccents**2.,yerr=utterr*ccents**2.,marker="x",ls="none",label="unlensed")
 
         pl.add(ccents,iltt*ccents**2.)
         pl.addErr(ccents,ltt*ccents**2.,yerr=ltterr*ccents**2.,marker="o",ls="none",label="lensed")
