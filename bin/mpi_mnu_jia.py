@@ -21,32 +21,36 @@ import argparse
 from mpi4py import MPI
 
 # Runtime params that should be moved to command line
-analysis_section = "analysis_small"
-sim_section = "sims_small"
-cosmology_section = "cc_nam"
+analysis_section = "analysis_liu"
+sim_section = "sims_liu"
 
 
 # Parse command line
 parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
 parser.add_argument("Exp", type=str,help='Experiment name.')
+parser.add_argument("mass", type=str,help='massive/massless')
 parser.add_argument("-N", "--nsim",     type=int,  default=None)
 args = parser.parse_args()
 Ntot = args.nsim
+mass = args.mass
+expf_name = args.Exp
 
-
-expf_name = args.Exp #"experiment_small"
+cosmology_section = "cc_jia_"+mass
 
 # Get MPI comm
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 numcores = comm.Get_size()    
 
-gradCut = None #2000 #None #2000
 
 # i/o directories
-out_dir = os.environ['WWW']+"plots/"+expf_name+"_"+str(gradCut)+"_"  # for plots
+out_dir = os.environ['WWW']+"plots/jiav2_"+mass+"_"+expf_name+"_"  # for plots
 
 
+from peakaboo.liuSims import LiuConvergence
+if Ntot is None: Ntot = 1000
+liucon = LiuConvergence("/gpfs01/astro/workarea/msyriac/data/jiav2/"+mass+"/")
+save_func = lambda x,ftype: "/gpfs01/astro/workarea/msyriac/data/jiav2/"+mass+"/"+ftype+"_"+expf_name+"_"+str(x).zfill(9)+".fits"
 
 # Efficiently distribute sims over MPI cores
 num_each,each_tasks = mpi_distribute(Ntot,numcores)
@@ -69,7 +73,7 @@ pol = False
 shape_sim, wcs_sim, shape_dat, wcs_dat = aio.enmaps_from_config(Config,sim_section,analysis_section,pol=pol)
 analysis_resolution =  np.min(enmap.extent(shape_dat,wcs_dat)/shape_dat[-2:])*60.*180./np.pi
 min_ell = fmaps.minimum_ell(shape_dat,wcs_dat)
-lb = aio.ellbounds_from_config(Config,"reconstruction_small",min_ell)
+lb = aio.ellbounds_from_config(Config,"reconstruction_jia",min_ell)
 tellmin = lb['tellminY']
 tellmax = lb['tellmaxY']
 pellmin = lb['pellminY']
@@ -80,13 +84,14 @@ parray_dat = aio.patch_array_from_config(Config,expf_name,shape_dat,wcs_dat,dime
 parray_sim = aio.patch_array_from_config(Config,expf_name,shape_sim,wcs_sim,dimensionless=True)
 lxmap_dat,lymap_dat,modlmap_dat,angmap_dat,lx_dat,ly_dat = fmaps.get_ft_attributes_enmap(shape_dat,wcs_dat)
 lxmap_sim,lymap_sim,modlmap_sim,angmap_sim,lx_sim,ly_sim = fmaps.get_ft_attributes_enmap(shape_sim,wcs_sim)
-lbin_edges = np.arange(kellmin,kellmax,300)
+lbin_edges = np.arange(kellmin,kellmax,200)
 lbinner_dat = stats.bin2D(modlmap_dat,lbin_edges)
 lbinner_sim = stats.bin2D(modlmap_sim,lbin_edges)
 
 # === COSMOLOGY ===
 theory, cc, lmax = aio.theory_from_config(Config,cosmology_section)
 parray_dat.add_theory(theory,lmax)
+gradCut = 2000
 template_dat = fmaps.simple_flipper_template_from_enmap(shape_dat,wcs_dat)
 nT = parray_dat.nT
 nP = parray_dat.nP
@@ -114,7 +119,7 @@ with io.nostdout():
                      halo=True,
                      uEqualsL=True,
                      gradCut=gradCut,verbose=False,
-                     bigell=lmax)
+                     bigell=9000)
 
     
 pixratio = analysis_resolution/Config.getfloat(sim_section,"pixel_arcmin")
@@ -127,7 +132,7 @@ parray_sim.add_theory(theory,lmax)
 k = -1
 for index in my_tasks:
     
-    kappa = parray_sim.get_kappa(ktype="grf",vary=False,seed=index+1000000)
+    kappa = parray_sim.get_kappa(ktype="grf",vary=False)
 
     phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
     #alpha_pix = enmap.grad_pixf(fphi)
@@ -138,8 +143,8 @@ for index in my_tasks:
     if rank==0: print "Lensing..."
     #lensed = lensing.lens_map_flat_pix(unlensed.copy(), alpha_pix.copy(),order=lens_order)
     lensed = lensing.lens_map(unlensed.copy(), grad_phi, order=lens_order, mode="spline", border="cyclic", trans=False, deriv=False, h=1e-7)
+
     if rank==0: print "Beam convolving..."
-    olensed = enmap.ndmap(lensed.copy() if abs(pixratio-1.)<1.e-3 else resample.resample_fft(lensed.copy(),shape_dat),wcs_dat)
 
     flensed = fftfast.fft(lensed,axes=[-2,-1])
     flensed *= parray_sim.lbeam
@@ -154,7 +159,7 @@ for index in my_tasks:
     cmb = enmap.ndmap(cmb,wcs_dat)
     if rank==0: print "Calculating powers for diagnostics..."
     utt2d = fmaps.get_simple_power_enmap(enmap.ndmap(unlensed if abs(pixratio-1.)<1.e-3 else resample.resample_fft(unlensed,shape_dat),wcs_dat))
-    ltt2d = fmaps.get_simple_power_enmap(olensed)
+    ltt2d = fmaps.get_simple_power_enmap(cmb)
     ccents,utt = lbinner_dat.bin(utt2d)
     ccents,ltt = lbinner_dat.bin(ltt2d)
     mpibox.add_to_stats("ucl",utt)
@@ -173,16 +178,21 @@ for index in my_tasks:
 
         
     kappa_recon = enmap.ndmap(rawkappa,wcs_dat)
+    print "Saving and calculating powers..."
+    enmap.write_fits(save_func(index,"kappa_recon"),kappa_recon)
+        
     apower = fmaps.get_simple_power_enmap(enmap1=kappa_recon)
 
     
     data_power_2d_TT = fmaps.get_simple_power_enmap(measured)
     sd = qest.N.super_dumb_N0_TTTT(data_power_2d_TT)
     lcents,sdp = lbinner_dat.bin(sd)
+    np.savetxt(save_func(index,"superdumbn0"),np.vstack((lcents,sdp)).T)
     
     mpibox.add_to_stats("superdumbs",sdp)
     n0subbed = apower - sd
     lcents,rclkk = lbinner_dat.bin(n0subbed)
+    np.savetxt(save_func(index,"auto_n0_subbed"),np.vstack((lcents,rclkk)).T)
     mpibox.add_to_stats("auto_n0subbed",rclkk)
 
 
@@ -193,8 +203,12 @@ for index in my_tasks:
     cpower = fmaps.get_simple_power_enmap(enmap1=kappa_recon,enmap2=downk)
     ipower = fmaps.get_simple_power_enmap(enmap1=downk)
     lcents, cclkk = lbinner_dat.bin(cpower)
+    np.savetxt(save_func(index,"crosspower"),np.vstack((lcents,cclkk)).T)
+
     lcents, aclkk = lbinner_dat.bin(apower)
+    np.savetxt(save_func(index,"autopower"),np.vstack((lcents,aclkk)).T)
     lcents, iclkk = lbinner_dat.bin(ipower)
+    np.savetxt(save_func(index,"inputpower"),np.vstack((lcents,iclkk)).T)
 
     mpibox.add_to_stats("cross",cclkk)
     mpibox.add_to_stats("ipower",iclkk)
@@ -229,7 +243,7 @@ if rank==0:
     diag = np.sqrt(np.diagonal(astats['cov'])*lcents*np.diff(lbin_edges)*fsky)
     diagr = np.sqrt(np.diagonal(rstats['cov'])*lcents*np.diff(lbin_edges)*fsky)
 
-    pl = io.Plotter(scaleY='log',scaleX='log')
+    pl = io.Plotter(scaleY='log')
     pl.addErr(lcents,cstats['mean'],yerr=cstats['errmean'],marker="o",label="recon x cross")
     pl.add(lcents,istats['mean'],marker="x",ls="none",label="input")
     pl.add(lcents,diag,ls="-.",lw=2,label="diag no n0sub")
@@ -237,31 +251,23 @@ if rank==0:
     lcents,nlkk = lbinner_dat.bin(qest.N.Nlkk['TT'])
     ellrange = np.arange(2,kellmax,1)
     clkk = theory.gCl("kk",ellrange)
-    clkk2d = theory.gCl("kk",modlmap_dat)
-    ccents,clkk1d = lbinner_dat.bin(clkk2d)
-    
-    pl.addErr(lcents,rstats['mean']-clkk1d,yerr=rstats['errmean'],marker="o",alpha=0.5,label="auto n0subbed - clkk")
     pl.addErr(lcents,astats['mean'],yerr=astats['errmean'],marker="o",alpha=0.5,label="raw")
     pl.addErr(lcents,rstats['mean'],yerr=rstats['errmean'],marker="o",alpha=0.5,label="auto n0subbed")
     pl.add(lcents,nlkk,ls="--",label="theory n0")
     pl.add(lcents,nstats['mean'],ls="--",label="superdumb n0")
-    pl.add(lcents,nstats['mean']+clkk1d,ls="--",label="superdumb n0 + clkk")
     pl.add(ellrange,clkk,color="k")
     pl.legendOn(loc="lower left",labsize=9)
-    pl._ax.set_xlim(30,1e5)
-    pl._ax.set_ylim(1e-12,1e-5)
     pl.done(out_dir+"cpower.png")
 
     io.quickPlot2d(stats.cov2corr(astats['covmean']),out_dir+"corr.png")
     io.quickPlot2d(stats.cov2corr(rstats['covmean']),out_dir+"rcorr.png")
-    np.save(out_dir+"4sqdeg_covmat_dl300.npy",rstats['cov'])
-    np.save(out_dir+"4sqdeg_lbin_edges_dl300.npy",lbin_edges)
 
     pl = io.Plotter()
     ldiff = (cstats['mean']-istats['mean'])*100./istats['mean']
     lerr = cstats['errmean']*100./istats['mean']
     pl.addErr(lcents,ldiff,yerr=lerr,marker="o",ls="-")
     pl._ax.axhline(y=0.,ls="--",color="k")
+    pl._ax.set_ylim(-20.,10.)
     pl.done(out_dir+"powerdiff.png")
     
     iutt2d = theory.uCl("TT",parray_dat.modlmap)
@@ -293,7 +299,7 @@ if rank==0:
     pl.addErr(ccents+50,pdiff,yerr=perr,marker="o",ls="none",label="lensed")
     pl.legendOn(labsize=10,loc="lower left")
     pl._ax.axhline(y=0.,ls="--",color="k")
-    pl._ax.set_ylim(-5.,5.)
+    pl._ax.set_ylim(-20.,20.)
     pl.done(out_dir+"clttpdiff.png")
 
 
