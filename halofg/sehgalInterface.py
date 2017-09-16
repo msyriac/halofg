@@ -1,10 +1,16 @@
 import healpy as hp
+import numpy as np
 
+def pix_from_config(SimConfig,cutout_section="cutout_default"):
+    arc = SimConfig.getfloat(cutout_section,"arc")
+    pix = SimConfig.getfloat(cutout_section,"px")
+    Npix = int(arc/pix+0.5)
+    return Npix,arc,pix
 
-def get_components_map_from_config(SimConfig,freq,components):
+def get_components_map_from_config(SimConfig,freq,components,base_nside=None):
     """
     Returns sum of healpix maps from Sehgal et. al. / Hill sims
-    in dimensionless units with the right calibration
+    in the same units with the right calibration
     specified in input/sehgal.ini.
     """
     if not(isinstance(components,list) or isinstance(components,tuple)): components = [components]
@@ -16,12 +22,31 @@ def get_components_map_from_config(SimConfig,freq,components):
         sec_name = str(int(freq))+"_"+component
         map_name = map_root+Config.get(sec_name,"file")
         hpmap = hp.read_map(map_name)
+        if base_nside is not None:
+           nside = hp.get_nside(hpmap)
+           if nside != base_nside:
+               hpmap = hp.ud_grade(hpmap,nside_out = base_nside)
         calib = Config.getfloat(sec_name,"calibration")
         units = Config.getfloat(sec_name,"unit_conversion")
         totmap = totmap + hpmap*units*calib
 
     del hpmap
     return totmap
+    
+
+def get_kappa(SimConfig,section="kappa",base_nside=None):
+    """
+    """
+    Config = SimConfig
+    map_root = Config.get("sims","map_root")
+
+    map_name = map_root+Config.get(section,"file")
+    hpmap = hp.read_map(map_name)
+    if base_nside is not None:
+        nside = hp.get_nside(hpmap)
+        if nside != base_nside:
+            hpmap = hp.ud_grade(hpmap,nside_out = base_nside)
+    return hpmap
     
 
 
