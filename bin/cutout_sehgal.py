@@ -88,6 +88,7 @@ Npix = int(size_arc/pix)
 stack = 0.
 k = 0
 
+
     
 for ra,dec in zip(halos_select_RA,halos_select_DEC):
 
