@@ -62,11 +62,12 @@ def select_from_halo_catalog(SimConfig,catalog_section='catalog_default',M200_mi
     assert random_sampling, "NotImplementedError: non-random sampling not implemented."
     df = df[sel].sample(Nmax) if ((Nmax is not None) and Nmax<df['Z'].size) else df[sel]
 
-
+    
     halos_select_z = df['Z']
     halos_select_M200 = df['M200']
     halos_select_RA = df['RA']
     halos_select_DEC = df['DEC']
+    halos_select_vz = df['VZ']
 
 
     if histogram_z_save_path is not None:
@@ -87,4 +88,4 @@ def select_from_halo_catalog(SimConfig,catalog_section='catalog_default',M200_mi
         plt.savefig(histogram_M_save_path)
 
 
-    return halos_select_RA,halos_select_DEC,halos_select_M200,halos_select_z
+    return halos_select_RA,halos_select_DEC,halos_select_M200,halos_select_z,halos_select_vz

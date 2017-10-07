@@ -24,13 +24,29 @@ from flipper.fft import fft,ifft
 
 # Runtime params that should be moved to command line
 analysis_section = "analysis_arc"
-sim_section = "sims"
+sim_section = "sims_arc"
 expf_name = "experiment_simple"
 cosmology_section = "cc_cluster_high"
-recon_section = "reconstruction_cluster"
+#recon_section = "reconstruction_cluster"
+recon_section = "reconstruction_cluster_lowell"
 
 postfilter = False
-gradweight = True
+gradweight = False
+
+def get_nfw(massOverh,modrmap,zL=0.7,concentration=3.2):
+    from alhazen.halos import NFWkappa
+
+    #massOverh = 2.e14
+    overdensity = 180.
+    critical = False
+    atClusterZ = False
+    comS = cc.results.comoving_radial_distance(cc.cmbZ)*cc.h
+    comL = cc.results.comoving_radial_distance(zL)*cc.h
+    winAtLens = (comS-comL)/comS
+    kappa,r500 = NFWkappa(cc,massOverh,concentration,zL,modrmap* 180.*60./np.pi,winAtLens,
+                              overdensity=overdensity,critical=critical,atClusterZ=atClusterZ)
+
+    return kappa
 
 
 # Parse command line
@@ -38,10 +54,14 @@ parser = argparse.ArgumentParser(description='Verify lensing reconstruction.')
 parser.add_argument("-N", "--nsim",     type=int,  default=None)
 parser.add_argument("-M", "--mass",     type=float,  default=2.e14)
 parser.add_argument("-G", "--gradcut",     type=int,  default=2000)
+parser.add_argument("-u", "--unlensed", action='store_true',help='Make unlensed.')
+parser.add_argument("-f", "--fake", action='store_true',help='Add fake kappa.')
 args = parser.parse_args()
 Nsims = args.nsim
 cluster_mass = args.mass
 grad_cut = args.gradcut
+nolens = args.unlensed
+if args.fake: assert nolens
 if grad_cut<1: grad_cut = None
 
 # Get MPI comm
@@ -51,7 +71,7 @@ numcores = comm.Get_size()
 
 
 # i/o directories
-out_dir = os.environ['WWW']+"plots/mass_"+str(cluster_mass)+"_"+str(grad_cut)+"_postfilter_"+str(postfilter)+"_"  # for plots
+out_dir = os.environ['WWW']+"plots/mass_"+str(cluster_mass)+"_"+str(grad_cut)+"_postfilter_"+str(postfilter)+"_unlensed_"+str(nolens)+"_fake_"+str(args.fake)+"_"  # for plots
 
     
 Ntot = Nsims
@@ -87,7 +107,7 @@ kellmin = lb['kellmin']
 kellmax = lb['kellmax']
 parray_dat = aio.patch_array_from_config(Config,expf_name,shape_dat,wcs_dat,dimensionless=False)
 parray_sim = aio.patch_array_from_config(Config,expf_name,shape_sim,wcs_sim,dimensionless=False)
-bin_edges = np.arange(0.,10.,analysis_resolution)
+bin_edges = np.arange(0.,5.,analysis_resolution*2)
 binner_dat = stats.bin2D(parray_dat.modrmap*60.*180./np.pi,bin_edges)
 binner_sim = stats.bin2D(parray_sim.modrmap*60.*180./np.pi,bin_edges)
 lxmap_dat,lymap_dat,modlmap_dat,angmap_dat,lx_dat,ly_dat = fmaps.get_ft_attributes_enmap(shape_dat,wcs_dat)
@@ -106,15 +126,15 @@ else:
 # === COSMOLOGY ===
 if rank==0: print "Cosmology..."
 theory, cc, lmax = aio.theory_from_config(Config,cosmology_section,dimensionless=False)
-assert cc is not None
-parray_dat.add_theory(theory,lmax,orphics_is_dimensionless=False)
-parray_sim.add_theory(theory,lmax,orphics_is_dimensionless=False)
+#assert cc is not None
+parray_dat.add_theory(cc,theory,lmax,orphics_is_dimensionless=False)
+parray_sim.add_theory(cc,theory,lmax,orphics_is_dimensionless=False)
 gradCut = grad_cut
 template_dat = fmaps.simple_flipper_template_from_enmap(shape_dat,wcs_dat)
 nT = parray_dat.nT
 nP = parray_dat.nP
-if rank==0: io.quickPlot2d(nT,out_dir+"nt.png")
-if rank==0: io.quickPlot2d(parray_dat.lbeam,out_dir+"kbeam.png")
+# if rank==0: io.quickPlot2d(nT,out_dir+"nt.png")
+# if rank==0: io.quickPlot2d(parray_dat.lbeam,out_dir+"kbeam.png")
 fMaskCMB_T = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=tellmin,lmax=tellmax)
 fMaskCMB_P = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=pellmin,lmax=pellmax)
 fMask = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=kellmin,lmax=kellmax)
@@ -171,7 +191,7 @@ for index in my_tasks:
                                   overdensity=overdensity,critical=critical,atClusterZ=atClusterZ)
         if rank==0: print "Kappa at ", thetaRef, " arc is ", kappaRef
 
-        #kappa = parray_sim.get_kappa(ktype="grf",vary=False)
+        #kappa = parray_sim.get_grf_kappa(seed=1)
         phi, fphi = lt.kappa_to_phi(kappa,parray_sim.modlmap,return_fphi=True)
         grad_phi = enmap.grad(phi)
             
@@ -179,11 +199,20 @@ for index in my_tasks:
     if rank==0: print "Generating unlensed CMB for ", k, "..."
     unlensed = parray_sim.get_unlensed_cmb(seed=index)
     if rank==0: print "Lensing..."
-    lensed = lensing.lens_map(unlensed.copy(), grad_phi, order=lens_order, mode="spline", border="cyclic", trans=False, deriv=False, h=1e-7)
+    lensed = unlensed if nolens else lensing.lens_map(unlensed.copy(), grad_phi, order=lens_order, mode="spline", border="cyclic", trans=False, deriv=False, h=1e-7)
     #lensed = lensing.lens_map_flat(unlensed.copy(), phi, order=lens_order)
     if rank==0: print "Downsampling..."
     cmb = lensed if abs(pixratio-1.)<1.e-3 else resample.resample_fft(lensed,shape_dat)
     cmb = enmap.ndmap(cmb,wcs_dat)
+    if rank==0: print "Adding noise..."
+    flensed = fftfast.fft(cmb,axes=[-2,-1])
+    flensed *= parray_dat.lbeam
+    lensedt = fftfast.ifft(flensed,axes=[-2,-1],normalize=True).real
+    noise = parray_dat.get_noise_sim(seed=index+10000000)
+    lensedt += noise
+    cmb = lensedt
+        
+
     
     if rank==0: print "Filtering and binning input kappa..."
     dkappa = enmap.ndmap(fmaps.filter_map(kappa,postfilter_sim,parray_sim.modlmap,lowPass=kellmax,highPass=kellmin),wcs_sim)
@@ -199,6 +228,7 @@ for index in my_tasks:
     qest.updateTEB_X(fkmaps,alreadyFTed=True)
     qest.updateTEB_Y()
     rawkappa = qest.getKappa("TT").real
+    if args.fake: rawkappa += dkappa
 
     if gradweight:
         Gx = ifft(qest.kGradx['T']*qest.N.WXY('TT'),axes=[-2,-1],normalize=True).real
@@ -220,7 +250,6 @@ for index in my_tasks:
 
     kappa_recon = enmap.ndmap(np.nan_to_num(rawkappa),wcs_dat)
     kappa_recon = enmap.ndmap(fmaps.filter_map(kappa_recon,postfilter_dat,parray_dat.modlmap,lowPass=kellmax,highPass=kellmin),wcs_dat)
-    kappa_recon -= kappa_recon.mean()
     mpibox.add_to_stack("recon_kappa2d",kappa_recon)
     cents,kapparecon1d = binner_dat.bin(kappa_recon)
     mpibox.add_to_stats("recon_kappa1d",kapparecon1d)
@@ -275,16 +304,27 @@ if rank==0:
     pl._ax.set_ylim(-20.,10.)
     pl.done(out_dir+"powerdiff.png")
 
-    wtd1 = mpibox.stacks["numer_kw1"]/mpibox.stacks["denom_kw1"]
-    wtd2 = mpibox.stacks["numer_kw2"]/mpibox.stacks["denom_kw2"]
+    if gradweight:
+        wtd1 = mpibox.stacks["numer_kw1"]/mpibox.stacks["denom_kw1"]
+        wtd2 = mpibox.stacks["numer_kw2"]/mpibox.stacks["denom_kw2"]
     
 
     kappa_stats = mpibox.stats["input_kappa1d"]
     kapparecon_stats = mpibox.stats["recon_kappa1d"]
 
+
+    first_bin = mpibox.vectors["recon_kappa1d"][:,0]
+    hist, bin_edges = np.histogram(first_bin,bins=30)
+    bin_cents = (bin_edges[1:]+bin_edges[:-1])/2.
+    pl = io.Plotter()
+    pl.add(bin_cents,hist)
+    pl.done(out_dir+"histogram_first_bin.png")
+    
+
     pl = io.Plotter(scaleX='log',scaleY='log')
-    pl.add(cents,wtd1,marker="o",label="wt1")
-    pl.add(cents,wtd2,marker="o",label="wt2")
+    if gradweight:
+        pl.add(cents,wtd1,marker="o",label="wt1")
+        pl.add(cents,wtd2,marker="o",label="wt2")
     
     pl.addErr(cents,kappa_stats['mean'],yerr=kappa_stats['errmean'],ls="-")
     pl.addErr(cents,kapparecon_stats['mean'],yerr=kapparecon_stats['errmean'],ls="--")
@@ -313,12 +353,16 @@ if rank==0:
     diff = (rec-inp)*100./inp
     differr = 100.*recerr/inp
 
-    diff1 = (wtd1-inp)*100./inp
-    diff2 = (wtd2-inp)*100./inp
+    if gradweight:
+            
+        diff1 = (wtd1-inp)*100./inp
+        diff2 = (wtd2-inp)*100./inp
     
     pl.addErr(cents,diff,yerr=differr,marker="o")
-    pl.add(cents,diff1,marker="o",label="wt1")
-    pl.add(cents,diff2,marker="o",label="wt2")
+    if gradweight:
+
+        pl.add(cents,diff1,marker="o",label="wt1")
+        pl.add(cents,diff2,marker="o",label="wt2")
     pl.legendOn(labsize=8,loc="lower right")
     pl.hline()
     pl._ax.set_ylim(-10,10)
@@ -338,3 +382,42 @@ if rank==0:
 
 
 
+    mean = kapparecon_stats['mean']
+    cov = kapparecon_stats['covmean']
+    siginv = np.linalg.inv(cov)
+    
+    chisq = np.dot(np.dot(mean,siginv),mean)
+    sigma = np.sqrt(chisq)
+    print "S/N null : ",sigma
+
+    sigma_width = cluster_mass/sigma
+    range_sigma = 10.
+    massmid = cluster_mass
+    left = max(massmid-range_sigma*sigma_width,0.)
+    right = massmid+range_sigma*sigma_width
+    print left,massmid,right
+    
+    mass_range = np.linspace(left,right,100)
+    Likes = []
+    for k,m in enumerate(mass_range):
+        trial = get_nfw(m,parray_dat.modrmap)
+        trial = enmap.ndmap(fmaps.filter_map(trial,trial*0.+1.,parray_dat.modlmap,lowPass=kellmax,highPass=kellmin),wcs_dat)
+        cents,theory = binner_dat.bin(trial)
+        Likes.append(np.exp(-0.5*stats.fchisq(mean,siginv,theory,amp=1.)))
+        if k%10==0: print m
+
+    Likes = np.array(Likes)
+    Likes /= Likes.sum()
+
+    maxlike = mass_range[np.where(np.isclose(Likes,Likes.max()))]
+    print "Max like mass ", maxlike
+    bias = (maxlike-args.mass)*100./args.mass
+    print "Bias ", bias," %"
+    
+    pl = io.Plotter()
+    pl.add(mass_range,Likes)
+    pl._ax.axvline(x=cluster_mass,ls="--")
+    pl._ax.axvline(x=maxlike,ls="-")
+    pl.done(out_dir+"likes.png")
+
+    
