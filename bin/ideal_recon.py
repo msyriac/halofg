@@ -23,9 +23,9 @@ from mpi4py import MPI
 from flipper.fft import fft,ifft
 
 # Runtime params that should be moved to command line
-analysis_section = "analysis_arc"
-sim_section = "sims_arc"
-expf_name = "experiment_simple"
+analysis_section = "analysis_tiny"
+sim_section = "sims_tiny"
+expf_name = "experiment_noiseless"
 cosmology_section = "cc_cluster_high"
 #recon_section = "reconstruction_cluster"
 recon_section = "reconstruction_cluster_lowell"

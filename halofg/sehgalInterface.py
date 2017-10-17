@@ -67,7 +67,6 @@ def select_from_halo_catalog(SimConfig,catalog_section='catalog_default',M200_mi
     halos_select_M200 = df['M200']
     halos_select_RA = df['RA']
     halos_select_DEC = df['DEC']
-    halos_select_vz = df['VZ']
 
 
     if histogram_z_save_path is not None:
@@ -88,4 +87,4 @@ def select_from_halo_catalog(SimConfig,catalog_section='catalog_default',M200_mi
         plt.savefig(histogram_M_save_path)
 
 
-    return halos_select_RA,halos_select_DEC,halos_select_M200,halos_select_z,halos_select_vz
+    return df,halos_select_RA,halos_select_DEC,halos_select_M200,halos_select_z
