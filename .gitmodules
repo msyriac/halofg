@@ -1,0 +1,3 @@
+[submodule "input/cosmo-config"]
+	path = input/cosmo-config
+	url = git@github.com:msyriac/cosmo-config.git

@@ -334,7 +334,7 @@ if rank==0:
 
 
 
-    io.quickPlot2d(stats.cov2corr(kappa_stats['cov']),out_dir+"kappa_corr.png")
+    io.quickPlot2d(stats.cov2corr(kapparecon_stats['cov']),out_dir+"kappa_corr.png")
 
     reconstack = mpibox.stacks["recon_kappa2d"]
     io.quickPlot2d(reconstack,out_dir+"reconstack.png")
