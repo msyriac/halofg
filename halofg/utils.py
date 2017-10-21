@@ -9,13 +9,24 @@ import numpy as np
 
 class HaloFgPipeline(object):
 
-    def __init__(self,inp_dir,Nmax,analysis_section,sims_section,recon_section,cutout_section,catalog_bin,
+    def __init__(self,inp_dir,out_dir,Nmax,analysis_section,sims_section,recon_section,cutout_section,catalog_bin,
                  experimentX,experimentY,components,recon_config_file="input/cmb-config/recon.ini",
-                 sim_config_file="input/sehgal.ini",mpi_comm=None,cosmology_section="cc_cluster",gradcut=2000,bin_edges=None):
+                 sim_config_file="input/sehgal.ini",mpi_comm=None,cosmology_section="cc_cluster",
+                 gradcut=2000,bin_edges=None,verbose=False):
         
         self.Config = io.config_from_file(recon_config_file)
         self.SimConfig = io.config_from_file(sim_config_file)
 
+        # Get MPI comm
+        self.comm = mpi_comm
+        try:
+            self.rank = mpi_comm.Get_rank()
+            self.numcores = mpi_comm.Get_size()
+        except:
+            self.rank = 0
+            self.numcores = 1
+        
+        if verbose and self.rank==0: print "Initializing patches..."
         shape_sim, wcs_sim, shape_dat, wcs_dat = aio.enmaps_from_config(self.Config,
                                                                         sims_section,
                                                                         analysis_section,
@@ -34,14 +45,6 @@ class HaloFgPipeline(object):
         pix = self.SimConfig.getfloat(cutout_section,"px")
         self.kshape, self.kwcs = enmap.rect_geometry(arc,pix,proj="car",pol=False)
 
-        # Get MPI comm
-        self.comm = mpi_comm
-        try:
-            self.rank = mpi_comm.Get_rank()
-            self.numcores = mpi_comm.Get_size()
-        except:
-            self.rank = 0
-            self.numcores = 1
 
         
         if Nmax is not None:
@@ -50,8 +53,10 @@ class HaloFgPipeline(object):
             Ntot = self.SimConfig.get(catalog_bin,'N_max')
             if Ntot=="inf" :
                 import glob
-                files = glob.glob(inp_dir+"/"+catalog_bin+"/*kappa*.fits")
+                search_path = self.SimConfig.get("sims","map_root")+inp_dir+"/"+catalog_bin+"/*kappa*.npy"
+                files = glob.glob(search_path)
                 Ntot = len(files)
+                assert Ntot>0
             else:
                 Ntot = int(Ntot)
 
@@ -60,6 +65,8 @@ class HaloFgPipeline(object):
         self.mpibox = MPIStats(self.comm,num_each,tag_start=333)
         if self.rank==0: print "At most ", max(num_each) , " tasks..."
         self.clusters = each_tasks[self.rank]
+
+        if verbose and self.rank==0: print "Initializing cosmology..."
 
         theory, cc, lmax = aio.theory_from_config(self.Config,cosmology_section,dimensionless=False)
         self.pdatX.add_theory(cc,theory,lmax,orphics_is_dimensionless=False)
@@ -76,6 +83,8 @@ class HaloFgPipeline(object):
 
 
         # RECONSTRUCTION INIT
+        if verbose and self.rank==0: print "Initializing quadratic estimator..."
+
         min_ell = fmaps.minimum_ell(shape_dat,wcs_dat)
         lb = aio.ellbounds_from_config(self.Config,recon_section,min_ell)
         tellminY = lb['tellminY']
@@ -117,18 +126,21 @@ class HaloFgPipeline(object):
                                         bigell=lmax)
 
 
+        if verbose and self.rank==0: print "Initializing binner..."
         import orphics.tools.stats as stats
         if bin_edges is None:
             analysis_resolution =  np.min(enmap.extent(shape_dat,wcs_dat)/shape_dat[-2:])*60.*180./np.pi
             bin_edges = np.arange(0.,10.,2.*analysis_resolution)
 
         self.binner = stats.bin2D(self.pdatX.modrmap*60.*180./np.pi,bin_edges)
+        self.plot_dir = self.SimConfig.get("output","plot_dir")+inp_dir+"/"+out_dir+"/"+catalog_bin+"/"
+        self.result_dir = self.SimConfig.get("output","result_dir")+inp_dir+"/"+out_dir+"/"+catalog_bin+"/"
 
     def get_unlensed(self,seed):
         return self.psim.get_unlensed_cmb(seed=seed)
 
     def get_kappa(self,index,stack=False):
-        retmap = np.load(self.map_root+"kappa_"+str(index)+".npy")
+        retmap = np.load(self.map_root+"kappa_"+str(index)+".npy").astype(np.float64)
         assert np.all(retmap.shape==self.kshape)
         if stack:
             self.mpibox.add_to_stack("inpstack",retmap)
@@ -149,7 +161,7 @@ class HaloFgPipeline(object):
     def get_fg_single_band(self,cluster_id,stack=False):
         fg = 0.
         for comp in self.components:
-            imap = np.load(self.map_root+comp+"_"+str(cluster_id)+".npy")
+            imap = np.load(self.map_root+comp+"_"+str(cluster_id)+".npy").astype(np.float64)
             assert np.all(imap.shape==self.kshape)
             fg += imap
             if stack:
@@ -183,5 +195,31 @@ class HaloFgPipeline(object):
         self.cents = cents
         return imap1d
     
-    def dump(self,plot_dir,result_dir):
+    def dump(self):
+        io.mkdir(self.plot_dir)
+        io.mkdir(self.result_dir)
+
+        reconstack = self.mpibox.stacks['reconstack']
+        inpstack = self.mpibox.stacks['inpstack']
+        
+        io.quickPlot2d(reconstack,self.plot_dir+"reconstack.png")
+        io.quickPlot2d(inpstack,self.plot_dir+"inpstack.png")
+        for comp in self.components:
+            io.quickPlot2d(self.mpibox.stacks[comp],self.plot_dir+comp+"_stack.png")
+
+
+            
+        if (inpstack.shape!=self.pdatX.shape): inpstack = enmap.ndmap(resample.resample_fft(inpstack,self.pdatX.shape),self.pdatX.wcs)
+        np.save(self.result_dir+"inpstack.npy",inpstack)
+        np.save(self.result_dir+"reconstack.npy",reconstack)
+        inp_profile = self.profile(inpstack)
+            
+        io.save_cols(self.result_dir+"profile.txt",(self.cents,
+                                                    inp_profile,
+                                                    self.mpibox.stats['recon1d']['mean']))
+
+        np.save(self.result_dir+"covmean.npy",self.mpibox.stats['recon1d']['covmean'])
+        np.save(self.result_dir+"cov.npy",self.mpibox.stats['recon1d']['cov'])
+
+                     
         print "Done!"
