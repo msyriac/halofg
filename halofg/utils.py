@@ -182,3 +182,6 @@ class HaloFgPipeline(object):
         cents,imap1d = self.binner.bin(imap2d)
         self.cents = cents
         return imap1d
+    
+    def dump(self,plot_dir,result_dir):
+        print "Done!"

@@ -31,25 +31,30 @@ pipe = HaloFgPipeline(args.InpDir,args.nmax,args.analysis,args.sims,
 observe = lambda imap,XY,seed: pipe.beam(XY,imap)+pipe.get_noise(XY,seed=seed)
 
 for k,cluster_id in enumerate(pipe.clusters):
-    u = pipe.get_unlensed(seed=cluster_id)
-    k = pipe.upsample(pipe.get_kappa(cluster_id,stack=True))
-    l = pipe.downsample(pipe.get_lensed(u,k))
+    unlensed = pipe.get_unlensed(seed=cluster_id)
+    input_kappa = pipe.upsample(pipe.get_kappa(cluster_id,stack=True))
+    lensed = pipe.downsample(pipe.get_lensed(unlensed,input_kappa))
 
     fg = pipe.get_fg_single_band(cluster_id,stack=True)
-    cmb = l+fg
+    cmb = lensed+fg
     observedY = observe(cmb,"Y",cluster_id+int(1e9))
     if (args.experimentX==args.experimentY) and not(args.xclean):
             observedX = observedY.copy()
     else:
-        xcmb = l if args.xclean else cmb
-        mul = 1 if args.experimentX==args.experimentY else 2
+        xcmb = lensed if args.xclean else cmb # don't add foregrounds to X leg if xclean
+        mul = 1 if args.experimentX==args.experimentY else 2 # reuse noise seed if it's the same experimen
         observedX = observe(xcmb,"X",cluster_id+mul*int(1e9))
 
     kappa = pipe.qest(observedX,observedY)
 
     pipe.mpibox.add_to_stack("reconstack",kappa)
     pipe.mpibox.add_to_stats("recon1d",pipe.profile(kappa))
+    if pipe.rank==0 and (k+1)%10==0: print "Rank 0 done with ",k+1, " / ", len(pipe.clusters), " tasks."
     
-    print kappa.shape
+pipe.mpibox.get_stacks()
+pipe.mpibox.get_stats()
 
+if pipe.rank==0:
+    pipe.dump(plot_dir="",result_dir="")
+    
 
