@@ -12,7 +12,7 @@ class HaloFgPipeline(object):
     def __init__(self,inp_dir,out_dir,Nmax,analysis_section,sims_section,recon_section,cutout_section,catalog_bin,
                  experimentX,experimentY,components,recon_config_file="input/cmb-config/recon.ini",
                  sim_config_file="input/sehgal.ini",mpi_comm=None,cosmology_section="cc_cluster",
-                 gradcut=2000,bin_edges=None,verbose=False):
+                 gradcut=2000,bin_edges=None,verbose=False,skip_recon=False):
         
         self.Config = io.config_from_file(recon_config_file)
         self.SimConfig = io.config_from_file(sim_config_file)
@@ -85,45 +85,48 @@ class HaloFgPipeline(object):
         # RECONSTRUCTION INIT
         if verbose and self.rank==0: print "Initializing quadratic estimator..."
 
-        min_ell = fmaps.minimum_ell(shape_dat,wcs_dat)
-        lb = aio.ellbounds_from_config(self.Config,recon_section,min_ell)
-        tellminY = lb['tellminY']
-        tellmaxY = lb['tellmaxY']
-        pellminY = lb['pellminY']
-        pellmaxY = lb['pellmaxY']
-        tellminX = lb['tellminX']
-        tellmaxX = lb['tellmaxX']
-        pellminX = lb['pellminX']
-        pellmaxX = lb['pellmaxX']
-        kellmin = lb['kellmin']
-        kellmax = lb['kellmax']
-        lxmap_dat,lymap_dat,modlmap_dat,angmap_dat,lx_dat,ly_dat = fmaps.get_ft_attributes_enmap(shape_dat,wcs_dat)
-        lxmap_sim,lymap_sim,modlmap_sim,angmap_sim,lx_sim,ly_sim = fmaps.get_ft_attributes_enmap(shape_sim,wcs_sim)
+        if not(skip_recon):
+            min_ell = fmaps.minimum_ell(shape_dat,wcs_dat)
+            lb = aio.ellbounds_from_config(self.Config,recon_section,min_ell)
+            tellminY = lb['tellminY']
+            tellmaxY = lb['tellmaxY']
+            pellminY = lb['pellminY']
+            pellmaxY = lb['pellmaxY']
+            tellminX = lb['tellminX']
+            tellmaxX = lb['tellmaxX']
+            pellminX = lb['pellminX']
+            pellmaxX = lb['pellmaxX']
+            kellmin = lb['kellmin']
+            kellmax = lb['kellmax']
+            self.kellmin = kellmin
+            self.kellmax = kellmax
+            lxmap_dat,lymap_dat,modlmap_dat,angmap_dat,lx_dat,ly_dat = fmaps.get_ft_attributes_enmap(shape_dat,wcs_dat)
+            lxmap_sim,lymap_sim,modlmap_sim,angmap_sim,lx_sim,ly_sim = fmaps.get_ft_attributes_enmap(shape_sim,wcs_sim)
 
-        template_dat = fmaps.simple_flipper_template_from_enmap(shape_dat,wcs_dat)
-        fMaskCMB_TX = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=tellminX,lmax=tellmaxX)
-        fMaskCMB_TY = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=tellminY,lmax=tellmaxY)
-        fMaskCMB_PX = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=pellminX,lmax=pellmaxX)
-        fMaskCMB_PY = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=pellminY,lmax=pellmaxY)
-        fMask = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=kellmin,lmax=kellmax)
+            template_dat = fmaps.simple_flipper_template_from_enmap(shape_dat,wcs_dat)
+            fMaskCMB_TX = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=tellminX,lmax=tellmaxX)
+            fMaskCMB_TY = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=tellminY,lmax=tellmaxY)
+            fMaskCMB_PX = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=pellminX,lmax=pellmaxX)
+            fMaskCMB_PY = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=pellminY,lmax=pellmaxY)
+            fMask = fmaps.fourierMask(lx_dat,ly_dat,modlmap_dat,lmin=kellmin,lmax=kellmax)
 
-        with io.nostdout():
-            self.qestimator = Estimator(template_dat,
-                                        theory,
-                                        theorySpectraForNorm=None,
-                                        noiseX2dTEB=[self.pdatX.nT,self.pdatX.nP,self.pdatX.nP],
-                                        noiseY2dTEB=[self.pdatY.nT,self.pdatY.nP,self.pdatY.nP],
-                                        fmaskX2dTEB=[fMaskCMB_TX,fMaskCMB_PX,fMaskCMB_PX],
-                                        fmaskY2dTEB=[fMaskCMB_TY,fMaskCMB_PY,fMaskCMB_PY],
-                                        fmaskKappa=fMask,
-                                        kBeamX = self.pdatX.lbeam,
-                                        kBeamY = self.pdatY.lbeam,
-                                        doCurl=False,
-                                        TOnly=True,
-                                        halo=True,
-                                        uEqualsL=True,
-                                        gradCut=gradcut,verbose=False,
-                                        bigell=lmax)
+            with io.nostdout():
+                self.qestimator = Estimator(template_dat,
+                                            theory,
+                                            theorySpectraForNorm=None,
+                                            noiseX2dTEB=[self.pdatX.nT,self.pdatX.nP,self.pdatX.nP],
+                                            noiseY2dTEB=[self.pdatY.nT,self.pdatY.nP,self.pdatY.nP],
+                                            fmaskX2dTEB=[fMaskCMB_TX,fMaskCMB_PX,fMaskCMB_PX],
+                                            fmaskY2dTEB=[fMaskCMB_TY,fMaskCMB_PY,fMaskCMB_PY],
+                                            fmaskKappa=fMask,
+                                            kBeamX = self.pdatX.lbeam,
+                                            kBeamY = self.pdatY.lbeam,
+                                            doCurl=False,
+                                            TOnly=True,
+                                            halo=True,
+                                            uEqualsL=True,
+                                            gradCut=gradcut,verbose=False,
+                                            bigell=lmax)
 
 
         if verbose and self.rank==0: print "Initializing binner..."
@@ -146,8 +149,13 @@ class HaloFgPipeline(object):
             self.mpibox.add_to_stack("inpstack",retmap)
         return retmap
         
-    def upsample(self,imap):
-        return enmap.ndmap(resample.resample_fft(imap,self.psim.shape),self.psim.wcs)
+    def upsample(self,imap,filter_inp=True):
+        upstamp = enmap.ndmap(resample.resample_fft(imap,self.psim.shape),self.psim.wcs)
+        if filter_inp:
+            return enmap.ndmap(fmaps.filter_map(upstamp,upstamp*0.+1.,self.psim.modlmap,lowPass=self.kellmax,highPass=self.kellmin),self.psim.wcs)
+        else:
+            return upstamp 
+
 
     def get_lensed(self,unlensed,kappa):
         phi = lt.kappa_to_phi(kappa,self.psim.modlmap,return_fphi=False)
@@ -210,6 +218,8 @@ class HaloFgPipeline(object):
 
             
         if (inpstack.shape!=self.pdatX.shape): inpstack = enmap.ndmap(resample.resample_fft(inpstack,self.pdatX.shape),self.pdatX.wcs)
+        inpstack = fmaps.filter_map(inpstack,inpstack*0.+1.,self.pdatX.modlmap,lowPass=self.kellmax,highPass=self.kellmin)
+        
         np.save(self.result_dir+"inpstack.npy",inpstack)
         np.save(self.result_dir+"reconstack.npy",reconstack)
         inp_profile = self.profile(inpstack)
@@ -223,3 +233,8 @@ class HaloFgPipeline(object):
 
                      
         print "Done!"
+        
+    def save_cache(self,lensed,cluster_id):
+        np.save(self.map_root+"lensed_cmb_"+str(cluster_id)+".npy",lensed)
+    def load_cached(self,cluster_id):
+        return np.load(self.map_root+"lensed_cmb_"+str(cluster_id)+".npy")

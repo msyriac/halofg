@@ -14,7 +14,7 @@ rank = comm.Get_rank()
 numcores = comm.Get_size()    
 
 import argparse
-parser = argparse.ArgumentParser(description='Save cutouts form Sehgal et. al. sims')
+parser = argparse.ArgumentParser(description='Save cutouts from Sehgal et. al. sims')
 parser.add_argument("Out", type=str,help='Output Directory Name (not path, that\'s specified in ini')
 parser.add_argument("Bin", type=str,help='Section of ini specifying mass/z bin from catalog')
 parser.add_argument("MapType", type=str,help='kappa/tsz/ksz/radio/cib')
@@ -55,7 +55,7 @@ Npix,arc,pix =  si.pix_from_config(SimConfig,cutout_section="cutout_default")
 import time
 k = 0
 a = time.time()
-Ncheck = 100
+Ncheck = 10
 
 save_dir = SimConfig.get("sims","map_root")+args.Out+"/"+args.Bin+"/"
 if rank==0:

@@ -23,6 +23,7 @@ parser.add_argument("-N", "--nmax",     type=int,  default=None,help="Limit to n
 parser.add_argument("-G", "--gradcut",     type=int,  default=2000)
 parser.add_argument("-X", "--xclean", action='store_true',help='Do not add foregrounds to X leg.')
 parser.add_argument("-v", "--verbose", action='store_true',help='Talk more.')
+parser.add_argument("-c", "--cache", action='store_true',help='Cache lensed CMB.')
 args = parser.parse_args()
 
 # Initialize pipeline
@@ -35,9 +36,18 @@ observe = lambda imap,XY,seed: pipe.beam(XY,imap)+pipe.get_noise(XY,seed=seed)
 
 # Loop through clusters
 for k,cluster_id in enumerate(pipe.clusters):
-    unlensed = pipe.get_unlensed(seed=cluster_id)
-    input_kappa = pipe.upsample(pipe.get_kappa(cluster_id,stack=True))
-    lensed = pipe.downsample(pipe.get_lensed(unlensed,input_kappa))
+    
+    try: # to see if we want to load cached files and if yes whether they can be found
+        assert args.cache
+        lensed = pipe.load_cached(cluster_id)
+        if pipe.rank==0 and k==0: print "Sucessfully loaded cached lensed CMB."
+    except: # do lensing if not
+        if pipe.rank==0 and k==0: print "Did not load cached lensed CMB."
+        unlensed = pipe.get_unlensed(seed=cluster_id)
+        input_kappa = pipe.upsample(pipe.get_kappa(cluster_id,stack=True))
+        lensed = pipe.downsample(pipe.get_lensed(unlensed,input_kappa))
+    if args.cache:
+        pipe.save_cache(lensed,cluster_id)
 
     fg = pipe.get_fg_single_band(cluster_id,stack=True)
     cmb = lensed+fg
