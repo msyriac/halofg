@@ -22,6 +22,7 @@ parser.add_argument("MapType", type=str,help='kappa/tsz/ksz/radio/cib')
 args = parser.parse_args()
 
 SimConfig = io.config_from_file("input/sehgal.ini")
+PathConfig = io.load_path_config()
 
 
 mmin = SimConfig.getfloat(args.Bin,'mass_min')
@@ -31,7 +32,7 @@ zmax = SimConfig.getfloat(args.Bin,'z_max')
 nmax = SimConfig.get(args.Bin,'N_max')
 nmax = None if nmax=="inf" else int(nmax)
 
-df,ra,dec,m200,z = si.select_from_halo_catalog(SimConfig,catalog_section='catalog_default',M200_min=mmin,M200_max=mmax,z_min=zmin,z_max=zmax,Nmax=nmax,random_sampling=True,histogram_z_save_path=None,histogram_M_save_path=None)
+df,ra,dec,m200,z = si.select_from_halo_catalog(PathConfig,SimConfig,catalog_section='catalog_default',M200_min=mmin,M200_max=mmax,z_min=zmin,z_max=zmax,Nmax=nmax,random_sampling=True,histogram_z_save_path=None,histogram_M_save_path=None)
 
 Nuse = len(ra)
 ra = ra.tolist()
@@ -46,9 +47,9 @@ if rank==0: print "At most ", max(num_each) , " tasks..."
 my_tasks = each_tasks[rank]
 
 if args.MapType=="kappa":
-    hp_map = si.get_kappa(SimConfig,section="kappa",base_nside=None)
+    hp_map = si.get_kappa(PathConfig,SimConfig,section="kappa",base_nside=None)
 else:
-    hp_map = si.get_component_map_from_config(SimConfig,args.MapType,base_nside=None)
+    hp_map = si.get_component_map_from_config(PathConfig,SimConfig,args.MapType,base_nside=None)
 
 
 Npix,arc,pix =  si.pix_from_config(SimConfig,cutout_section="cutout_default")
@@ -57,7 +58,8 @@ k = 0
 a = time.time()
 Ncheck = 10
 
-save_dir = SimConfig.get("sims","map_root")+args.Out+"/"+args.Bin+"/"
+plot_dir = PathConfig.get("paths","plots")+args.Out+"/"+args.Bin+"/"
+save_dir = PathConfig.get("paths","input_data")+args.Out+"/"+args.Bin+"/"
 if rank==0:
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -86,4 +88,4 @@ for index in my_tasks:
 mpibox.get_stacks()            
 if rank==0:
 
-    io.quickPlot2d(mpibox.stacks[args.MapType],io.dout_dir+args.MapType+"_"+args.Bin+"_stack.png")
+    io.quickPlot2d(mpibox.stacks[args.MapType],plot_dir+args.MapType+"_"+args.Bin+"_stack.png")

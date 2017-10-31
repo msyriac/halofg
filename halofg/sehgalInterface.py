@@ -7,10 +7,10 @@ def pix_from_config(SimConfig,cutout_section="cutout_default"):
     Npix = int(arc/pix+0.5)
     return Npix,arc,pix
 
-def get_component_map_from_config(SimConfig,section,base_nside=None):
+def get_component_map_from_config(PathConfig,SimConfig,section,base_nside=None):
     Config = SimConfig
     sec_name = section
-    map_root = Config.get("sims","map_root")
+    map_root = PathConfig.get("paths","input_data")
     map_name = map_root+Config.get(sec_name,"file")
     hpmap = hp.read_map(map_name)
     if base_nside is not None:
@@ -39,11 +39,11 @@ def get_components_map_from_config(SimConfig,freq,components,base_nside=None):
     return totmap
     
 
-def get_kappa(SimConfig,section="kappa",base_nside=None):
+def get_kappa(PathConfig,SimConfig,section="kappa",base_nside=None):
     """
     """
     Config = SimConfig
-    map_root = Config.get("sims","map_root")
+    map_root = PathConfig.get("paths","input_data")
 
     map_name = map_root+Config.get(section,"file")
     hpmap = hp.read_map(map_name)
@@ -56,10 +56,10 @@ def get_kappa(SimConfig,section="kappa",base_nside=None):
 
 
 
-def select_from_halo_catalog(SimConfig,catalog_section='catalog_default',M200_min=-np.inf,M200_max=np.inf,z_min=-np.inf,z_max=np.inf,Nmax=None,random_sampling=True,histogram_z_save_path=None,histogram_M_save_path=None):
+def select_from_halo_catalog(PathConfig,SimConfig,catalog_section='catalog_default',M200_min=-np.inf,M200_max=np.inf,z_min=-np.inf,z_max=np.inf,Nmax=None,random_sampling=True,histogram_z_save_path=None,histogram_M_save_path=None):
     import pandas as pd
     Config = SimConfig
-    map_root = Config.get("sims","map_root")
+    map_root = PathConfig.get("paths","input_data")
 
     halo_file = map_root + Config.get(catalog_section,'file')
     df = pd.read_hdf(halo_file)
