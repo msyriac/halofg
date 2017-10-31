@@ -3,8 +3,7 @@ import numpy as np
 import halofg.sehgalInterface as si
 import os,sys
 import orphics.tools.io as io
-from orphics.analysis.pipeline import mpi_distribute, MPIStats
-from orphics.tools.mpi import MPI
+from orphics.tools.mpi import MPI, mpi_distribute, MPIStats
 import healpy as hp
 
 
