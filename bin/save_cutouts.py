@@ -3,9 +3,10 @@ import numpy as np
 import halofg.sehgalInterface as si
 import os,sys
 import orphics.tools.io as io
-from orphics.analysis.pipeline import mpi_distribute, MPIStats
-from orphics.tools.mpi import MPI
+from orphics.tools.mpi import MPI, mpi_distribute, MPIStats
+import orphics.tools.curvedSky as curved
 import healpy as hp
+import logging, time
 
 
 # Get MPI comm
@@ -23,6 +24,13 @@ args = parser.parse_args()
 
 SimConfig = io.config_from_file("input/sehgal.ini")
 PathConfig = io.load_path_config()
+
+logging.basicConfig(filename="saved_cuts"+str(time.time()*10)+".log",level=logging.DEBUG,format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',datefmt='%m-%d %H:%M',filemode='w')
+console = logging.StreamHandler()
+console.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+console.setFormatter(formatter)
+logging.getLogger('').addHandler(console)
 
 
 mmin = SimConfig.getfloat(args.Bin,'mass_min')
@@ -42,7 +50,7 @@ dec = dec.tolist()
 num_each,each_tasks = mpi_distribute(Nuse,numcores)
 # Initialize a container for stats and stacks
 mpibox = MPIStats(comm,num_each,tag_start=333)
-if rank==0: print "At most ", max(num_each) , " tasks..."
+if rank==0: logging.info("At most "+ str(max(num_each)) + " tasks...")
 # What am I doing?
 my_tasks = each_tasks[rank]
 
@@ -69,7 +77,7 @@ comm.Barrier()
     
 for index in my_tasks:
     
-    cutout = hp.visufunc.cutout_gnomonic(hp_map, rot=(ra[index], dec[index]), coord='C', xsize=Npix, ysize=Npix,reso=pix)
+    cutout = curved.cutout_gnomonic(hp_map, rot=(ra[index], dec[index]), coord='C', xsize=Npix, ysize=Npix,reso=pix)
     cutout = np.asarray(cutout.astype(np.float32))
     mpibox.add_to_stack(args.MapType,cutout)
     np.save(save_dir+"cutout_"+args.MapType+"_"+str(index),cutout)
@@ -81,7 +89,7 @@ for index in my_tasks:
             b = time.time()
             avg = (b-a)*1./Ncheck
             remaining = avg*(len(my_tasks)-k)/60.
-            print remaining, " minutes left..."
+            logging.info(str(remaining)+ " minutes left...")
             a = b
 
 
