@@ -4,7 +4,7 @@ import halofg.sehgalInterface as si
 import os,sys
 import orphics.tools.io as io
 from orphics.analysis.pipeline import mpi_distribute, MPIStats
-from mpi4py import MPI
+from orphics.tools.mpi import MPI
 import healpy as hp
 
 
