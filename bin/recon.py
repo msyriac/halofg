@@ -1,12 +1,9 @@
 from halofg.utils import HaloFgPipeline
 import argparse
-try:
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-except:
-    comm = None
+from orphics.tools.mpi import MPI
+import orphics.tools.io as io
 
-
+if MPI.COMM_WORLD.Get_rank()==0: print "Starting..."
 # Parse command line
 parser = argparse.ArgumentParser(description='Run halo foregrounds pipeline.')
 parser.add_argument("InpDir", type=str,help='Input Directory Name (not path, that\'s specified in ini)')
@@ -23,30 +20,37 @@ parser.add_argument("-N", "--nmax",     type=int,  default=None,help="Limit to n
 parser.add_argument("-G", "--gradcut",     type=int,  default=2000)
 parser.add_argument("-X", "--xclean", action='store_true',help='Do not add foregrounds to X leg.')
 parser.add_argument("-v", "--verbose", action='store_true',help='Talk more.')
-parser.add_argument("-c", "--cache", action='store_true',help='Cache lensed CMB.')
+parser.add_argument("-w", "--write_cache", action='store_true',help='Cache lensed CMB.')
+parser.add_argument("-r", "--read_cache", action='store_true',help='Read cached lensed CMB.')
 args = parser.parse_args()
 
 # Initialize pipeline
-pipe = HaloFgPipeline(args.InpDir,args.OutDir,args.nmax,args.analysis,args.sims,
+PathConfig = io.load_path_config()
+pipe = HaloFgPipeline(PathConfig,args.InpDir,args.OutDir,args.nmax,args.analysis,args.sims,
                       args.recon,args.cutout,args.catalog_bin,args.experimentX,args.experimentY,
-                      args.components,mpi_comm = comm,gradcut = args.gradcut,verbose = args.verbose)
+                      args.components,mpi_comm = MPI.COMM_WORLD,gradcut = args.gradcut,verbose = args.verbose)
 
 # Define an observation
 observe = lambda imap,XY,seed: pipe.beam(XY,imap)+pipe.get_noise(XY,seed=seed)
 
 # Loop through clusters
 for k,cluster_id in enumerate(pipe.clusters):
-    
-    try: # to see if we want to load cached files and if yes whether they can be found
-        assert args.cache
-        lensed = pipe.load_cached(cluster_id)
-        if pipe.rank==0 and k==0: print "Sucessfully loaded cached lensed CMB."
-    except: # do lensing if not
-        if pipe.rank==0 and k==0: print "Did not load cached lensed CMB."
+
+    if args.read_cache:
+        try:
+            lensed = pipe.load_cached(cluster_id)
+            if pipe.rank==0 and k==0: pipe.logger.info("Sucessfully loaded cached lensed CMB.")
+            loaded_cache = True
+        except:
+            loaded_cache = False
+    else:
+        loaded_cache = False
+    if not(loaded_cache): # do lensing if not
+        if pipe.rank==0 and k==0: pipe.logger.info( "Did not load cached lensed CMB.")
         unlensed = pipe.get_unlensed(seed=cluster_id)
         input_kappa = pipe.upsample(pipe.get_kappa(cluster_id,stack=True))
         lensed = pipe.downsample(pipe.get_lensed(unlensed,input_kappa))
-    if args.cache:
+    if args.write_cache and not(loaded_cache):
         pipe.save_cache(lensed,cluster_id)
 
     fg = pipe.get_fg_single_band(cluster_id,stack=True)
@@ -63,7 +67,7 @@ for k,cluster_id in enumerate(pipe.clusters):
 
     pipe.mpibox.add_to_stack("reconstack",kappa)
     pipe.mpibox.add_to_stats("recon1d",pipe.profile(kappa))
-    if pipe.rank==0 and (k+1)%10==0: print "Rank 0 done with ",k+1, " / ", len(pipe.clusters), " tasks."
+    if pipe.rank==0 and (k+1)%10==0: pipe.logger.info( "Rank 0 done with "+str(k+1)+ " / "+str( len(pipe.clusters))+ " tasks.")
     
 pipe.mpibox.get_stacks()
 pipe.mpibox.get_stats()

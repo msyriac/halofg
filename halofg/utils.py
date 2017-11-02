@@ -4,18 +4,21 @@ from alhazen.quadraticEstimator import Estimator
 import alhazen.io as aio
 import alhazen.lensTools as lt
 from enlib import enmap, resample, lensing, fft
-from orphics.analysis.pipeline import mpi_distribute, MPIStats
+from orphics.tools.mpi import mpi_distribute, MPIStats
 import numpy as np
+import logging, time, os
+
 
 class HaloFgPipeline(object):
 
-    def __init__(self,inp_dir,out_dir,Nmax,analysis_section,sims_section,recon_section,cutout_section,catalog_bin,
-                 experimentX,experimentY,components,recon_config_file="input/cmb-config/recon.ini",
+    def __init__(self,PathConfig,inp_dir,out_dir,Nmax,analysis_section,sims_section,recon_section,cutout_section,catalog_bin,
+                 experimentX,experimentY,components,recon_config_file="input/recon.ini",
                  sim_config_file="input/sehgal.ini",mpi_comm=None,cosmology_section="cc_cluster",
                  gradcut=2000,bin_edges=None,verbose=False,skip_recon=False):
         
         self.Config = io.config_from_file(recon_config_file)
         self.SimConfig = io.config_from_file(sim_config_file)
+        
 
         # Get MPI comm
         self.comm = mpi_comm
@@ -25,8 +28,12 @@ class HaloFgPipeline(object):
         except:
             self.rank = 0
             self.numcores = 1
-        
-        if verbose and self.rank==0: print "Initializing patches..."
+
+        if self.rank==0: 
+            self.logger = io.get_logger("recon")
+
+
+        if verbose and self.rank==0: self.logger.info("Initializing patches...")
         shape_sim, wcs_sim, shape_dat, wcs_dat = aio.enmaps_from_config(self.Config,
                                                                         sims_section,
                                                                         analysis_section,
@@ -53,7 +60,8 @@ class HaloFgPipeline(object):
             Ntot = self.SimConfig.get(catalog_bin,'N_max')
             if Ntot=="inf" :
                 import glob
-                search_path = self.SimConfig.get("sims","map_root")+inp_dir+"/"+catalog_bin+"/*kappa*.npy"
+                map_root = PathConfig.get("paths","input_data")
+                search_path = map_root+inp_dir+"/"+catalog_bin+"/*kappa*.npy"
                 files = glob.glob(search_path)
                 Ntot = len(files)
                 assert Ntot>0
@@ -63,18 +71,37 @@ class HaloFgPipeline(object):
                 
         num_each,each_tasks = mpi_distribute(Ntot,self.numcores)
         self.mpibox = MPIStats(self.comm,num_each,tag_start=333)
-        if self.rank==0: print "At most ", max(num_each) , " tasks..."
+        if self.rank==0: self.logger.info( "At most "+ str(max(num_each)) + " tasks...")
         self.clusters = each_tasks[self.rank]
 
-        if verbose and self.rank==0: print "Initializing cosmology..."
+        if verbose and self.rank==0: self.logger.info( "Initializing cosmology...")
 
-        theory, cc, lmax = aio.theory_from_config(self.Config,cosmology_section,dimensionless=False)
+        def do_cosmology():
+            return aio.theory_from_config(self.Config,cosmology_section,dimensionless=False)
+
+        if self.rank==0:
+            try:
+                old_cores = os.environ["OMP_NUM_THREADS"]
+            except:
+                old_cores = "1"
+            import multiprocessing
+            num_cores= str(multiprocessing.cpu_count())
+            os.environ["OMP_NUM_THREADS"] = num_cores
+            self.logger.info( "Rank 0 possibly calling CAMB with "+num_cores+" cores...")
+            theory, cc, lmax = do_cosmology()
+            os.environ["OMP_NUM_THREADS"] = old_cores
+            self.logger.info( "Rank 0 done with CAMB and setting OMP_NUM_THREADS back to  "+old_cores)
+
+        self.comm.Barrier()
+        if self.rank!=0:
+            theory, cc, lmax = do_cosmology()
+        
         self.pdatX.add_theory(cc,theory,lmax,orphics_is_dimensionless=False)
         self.pdatY.add_theory(cc,theory,lmax,orphics_is_dimensionless=False)
         self.psim.add_theory(cc,theory,lmax,orphics_is_dimensionless=False)
 
         self.lens_order = self.Config.getint(sims_section,"lens_order")
-        self.map_root = self.SimConfig.get("sims","map_root")+inp_dir+"/"+catalog_bin+"/cutout_"
+        self.map_root = PathConfig.get("paths","input_data")+inp_dir+"/"+catalog_bin+"/cutout_"
 
         # FG COMPONENTS INIT
         self.components = components.split(',')
@@ -83,7 +110,7 @@ class HaloFgPipeline(object):
 
 
         # RECONSTRUCTION INIT
-        if verbose and self.rank==0: print "Initializing quadratic estimator..."
+        if verbose and self.rank==0: self.logger.info( "Initializing quadratic estimator...")
 
         if not(skip_recon):
             min_ell = fmaps.minimum_ell(shape_dat,wcs_dat)
@@ -129,28 +156,33 @@ class HaloFgPipeline(object):
                                             bigell=lmax)
 
 
-        if verbose and self.rank==0: print "Initializing binner..."
+        if verbose and self.rank==0: self.logger.info( "Initializing binner...")
         import orphics.tools.stats as stats
         if bin_edges is None:
             analysis_resolution =  np.min(enmap.extent(shape_dat,wcs_dat)/shape_dat[-2:])*60.*180./np.pi
             bin_edges = np.arange(0.,10.,2.*analysis_resolution)
 
         self.binner = stats.bin2D(self.pdatX.modrmap*60.*180./np.pi,bin_edges)
-        self.plot_dir = self.SimConfig.get("output","plot_dir")+inp_dir+"/"+out_dir+"/"+catalog_bin+"/"
-        self.result_dir = self.SimConfig.get("output","result_dir")+inp_dir+"/"+out_dir+"/"+catalog_bin+"/"
+        self.plot_dir = PathConfig.get("paths","plots")+inp_dir+"/"+out_dir+"/"+catalog_bin+"/"
+        self.result_dir = PathConfig.get("paths","output_data")+inp_dir+"/"+out_dir+"/"+catalog_bin+"/"
 
     def get_unlensed(self,seed):
         return self.psim.get_unlensed_cmb(seed=seed)
 
     def get_kappa(self,index,stack=False):
-        retmap = np.load(self.map_root+"kappa_"+str(index)+".npy").astype(np.float64)
-        assert np.all(retmap.shape==self.kshape)
+        #retmap = np.load(self.map_root+"kappa_"+str(index)+".npy").astype(np.float64)
+        #assert np.all(retmap.shape==self.kshape)
+
+        from alhazen.halos import nfw_kappa
+        retmap = nfw_kappa(2.e13,self.psim.modrmap,self.psim.cc,zL=0.7,concentration=3.2,overdensity=180.,critical=False,atClusterZ=False)
+
         if stack:
             self.mpibox.add_to_stack("inpstack",retmap)
         return retmap
         
     def upsample(self,imap,filter_inp=True):
-        upstamp = enmap.ndmap(resample.resample_fft(imap,self.psim.shape),self.psim.wcs)
+        upstamp = enmap.ndmap(resample.resample_fft(imap,self.psim.shape),self.psim.wcs) if imap.shape!=self.psim.shape \
+                  else enmap.ndmap(imap,self.psim.wcs)
         if filter_inp:
             return enmap.ndmap(fmaps.filter_map(upstamp,upstamp*0.+1.,self.psim.modlmap,lowPass=self.kellmax,highPass=self.kellmin),self.psim.wcs)
         else:
@@ -232,7 +264,7 @@ class HaloFgPipeline(object):
         np.save(self.result_dir+"cov.npy",self.mpibox.stats['recon1d']['cov'])
 
                      
-        print "Done!"
+        self.logger.info( "Done!")
         
     def save_cache(self,lensed,cluster_id):
         np.save(self.map_root+"lensed_cmb_"+str(cluster_id)+".npy",lensed)
