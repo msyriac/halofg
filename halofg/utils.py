@@ -199,7 +199,8 @@ class HaloFgPipeline(object):
         return lensed
 
     def downsample(self,imap):
-        return enmap.ndmap(resample.resample_fft(imap,self.pdatX.shape),self.pdatX.wcs)
+        return enmap.ndmap(resample.resample_fft(imap,self.pdatX.shape),self.pdatX.wcs)  if imap.shape!=self.pdatX.shape \
+                  else enmap.ndmap(imap,self.pdatX.wcs)
 
     def get_fg_single_band(self,cluster_id,stack=False):
         fg = 0.
