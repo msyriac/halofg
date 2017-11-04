@@ -39,19 +39,22 @@ class HaloFgPipeline(object):
                                                                         analysis_section,
                                                                         pol=False)
 
+        if verbose and self.rank==0: self.logger.info("Got shapes and wcs.")
         
         self.psim = aio.patch_array_from_config(self.Config,experimentX,
-                                                shape_sim,wcs_sim,dimensionless=False)
+                                                shape_sim,wcs_sim,dimensionless=False,skip_instrument=True)
         self.pdatX = aio.patch_array_from_config(self.Config,experimentX,
                                                 shape_dat,wcs_dat,dimensionless=False)
         self.pdatY = aio.patch_array_from_config(self.Config,experimentY,
                                                 shape_dat,wcs_dat,dimensionless=False)
 
+        if verbose and self.rank==0: self.logger.info("Initialized PatchArrays.")
 
         arc = self.SimConfig.getfloat(cutout_section,"arc")
         pix = self.SimConfig.getfloat(cutout_section,"px")
         self.kshape, self.kwcs = enmap.rect_geometry(arc,pix,proj="car",pol=False)
 
+        if verbose and self.rank==0: self.logger.info("Getting num tasks...")
 
         
         if Nmax is not None:
@@ -170,11 +173,11 @@ class HaloFgPipeline(object):
         return self.psim.get_unlensed_cmb(seed=seed)
 
     def get_kappa(self,index,stack=False):
-        #retmap = np.load(self.map_root+"kappa_"+str(index)+".npy").astype(np.float64)
-        #assert np.all(retmap.shape==self.kshape)
+        retmap = np.load(self.map_root+"kappa_"+str(index)+".npy").astype(np.float64)
+        assert np.all(retmap.shape==self.kshape)
 
-        from alhazen.halos import nfw_kappa
-        retmap = nfw_kappa(2.e13,self.psim.modrmap,self.psim.cc,zL=0.7,concentration=3.2,overdensity=180.,critical=False,atClusterZ=False)
+        #from alhazen.halos import nfw_kappa
+        #retmap = nfw_kappa(5.e13,self.psim.modrmap,self.psim.cc,zL=0.7,concentration=3.2,overdensity=500.,critical=True,atClusterZ=True)
 
         if stack:
             self.mpibox.add_to_stack("inpstack",retmap)

@@ -1,9 +1,10 @@
+from orphics.tools.mpi import MPI
+if MPI.COMM_WORLD.Get_rank()==0: print "Starting..."
 from halofg.utils import HaloFgPipeline
 import argparse
-from orphics.tools.mpi import MPI
 import orphics.tools.io as io
+from enlib import bench
 
-if MPI.COMM_WORLD.Get_rank()==0: print "Starting..."
 # Parse command line
 parser = argparse.ArgumentParser(description='Run halo foregrounds pipeline.')
 parser.add_argument("InpDir", type=str,help='Input Directory Name (not path, that\'s specified in ini)')
@@ -27,15 +28,15 @@ args = parser.parse_args()
 # Initialize pipeline
 PathConfig = io.load_path_config()
 pipe = HaloFgPipeline(PathConfig,args.InpDir,args.OutDir,args.nmax,args.analysis,args.sims,
-                      args.recon,args.cutout,args.catalog_bin,args.experimentX,args.experimentY,
-                      args.components,mpi_comm = MPI.COMM_WORLD,gradcut = args.gradcut,verbose = args.verbose)
+                  args.recon,args.cutout,args.catalog_bin,args.experimentX,args.experimentY,
+                  args.components,mpi_comm = MPI.COMM_WORLD,gradcut = args.gradcut,verbose = args.verbose)
 
 # Define an observation
 observe = lambda imap,XY,seed: pipe.beam(XY,imap)+pipe.get_noise(XY,seed=seed)
 
+
 # Loop through clusters
 for k,cluster_id in enumerate(pipe.clusters):
-
     if args.read_cache:
         try:
             lensed = pipe.load_cached(cluster_id)
@@ -69,8 +70,9 @@ for k,cluster_id in enumerate(pipe.clusters):
     pipe.mpibox.add_to_stats("recon1d",pipe.profile(kappa))
     if pipe.rank==0 and (k+1)%10==0: pipe.logger.info( "Rank 0 done with "+str(k+1)+ " / "+str( len(pipe.clusters))+ " tasks.")
     
-pipe.mpibox.get_stacks()
-pipe.mpibox.get_stats()
+if pipe.rank==0: pipe.logger.info( "MPI Collecting...")
+pipe.mpibox.get_stacks(verbose=False)
+pipe.mpibox.get_stats(verbose=False)
 
 if pipe.rank==0:
     pipe.dump()
