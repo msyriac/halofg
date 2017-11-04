@@ -173,11 +173,11 @@ class HaloFgPipeline(object):
         return self.psim.get_unlensed_cmb(seed=seed)
 
     def get_kappa(self,index,stack=False):
-        retmap = np.load(self.map_root+"kappa_"+str(index)+".npy").astype(np.float64)
-        assert np.all(retmap.shape==self.kshape)
+        #retmap = np.load(self.map_root+"kappa_"+str(index)+".npy").astype(np.float64)
+        #assert np.all(retmap.shape==self.kshape)
 
-        #from alhazen.halos import nfw_kappa
-        #retmap = nfw_kappa(5.e13,self.psim.modrmap,self.psim.cc,zL=0.7,concentration=3.2,overdensity=500.,critical=True,atClusterZ=True)
+        from alhazen.halos import nfw_kappa
+        retmap = nfw_kappa(2.e13,self.psim.modrmap,self.psim.cc,zL=0.7,concentration=3.2,overdensity=500.,critical=True,atClusterZ=True)
 
         if stack:
             self.mpibox.add_to_stack("inpstack",retmap)
