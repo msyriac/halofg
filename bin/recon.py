@@ -56,7 +56,7 @@ for k,cluster_id in enumerate(pipe.clusters):
 
     fg = pipe.get_fg_single_band(cluster_id,stack=True)
     cmb = lensed+fg
-    observedY = observe(cmb,"Y",cluster_id+int(1e9))
+    observedY = observe(cmb,"Y",cluster_id)
     if (args.experimentX==args.experimentY) and not(args.xclean):
             observedX = observedY.copy()
     else:
