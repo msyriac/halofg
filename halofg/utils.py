@@ -177,7 +177,7 @@ class HaloFgPipeline(object):
         #assert np.all(retmap.shape==self.kshape)
 
         from alhazen.halos import nfw_kappa
-        retmap = nfw_kappa(8e12,self.psim.modrmap,self.psim.cc,zL=0.7,concentration=3.2,overdensity=500.,critical=True,atClusterZ=True)
+        retmap = nfw_kappa(2.e13,self.psim.modrmap,self.psim.cc,zL=0.7,concentration=3.2,overdensity=500.,critical=True,atClusterZ=True)
 
         if stack:
             self.mpibox.add_to_stack("inpstack",retmap)
