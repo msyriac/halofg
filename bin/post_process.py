@@ -27,7 +27,6 @@ PathConfig = io.load_path_config()
 pout_dir = PathConfig.get("paths","plots")
 
 for out_dir in args.OutDirs.split(','):
-    pl = io.Plotter()
     for k in range(1,2):
         catalog_bin = "sehgal_bin_"+str(k)
         result_dir = PathConfig.get("paths","output_data")+args.InpDir+"/"+out_dir+"/"+catalog_bin+"/"
@@ -48,13 +47,19 @@ for out_dir in args.OutDirs.split(','):
 
         errrat = errs/inp
         
-        pl.addErr(cents+k*0.1,diff,yerr=errrat,color="C"+str(k),label=str(k))
+        pl = io.Plotter()
+        pl.addErr(cents+k*0.1,diff,yerr=errrat,color="C"+str(k),label=str(k),marker="o")
+        pl.hline()
+        pl.hline(y=-0.05,ls="-.")
+        pl._ax.set_ylim(-0.1,0.05)
+        pl.legendOn()
+        pl.done(pout_dir+out_dir+"_profdiff.png")
         
-        #pl.addErr(cents,recon,yerr=errs,color="C"+str(k),ls="-")
-        #pl.add(cents,inp,ls="--",color="C"+str(k))
+        pl2 = io.Plotter()
+        pl2.addErr(cents,recon,yerr=errs,color="C"+str(k),ls="-",marker="o")
+        pl2.add(cents,inp,ls="--",color="C"+str(k),marker="x")
 
-    pl.hline()
-    pl.hline(y=-0.05,ls="-.")
-    pl._ax.set_ylim(-0.1,0.05)
-    pl.legendOn()
-    pl.done(pout_dir+out_dir+"_profdiff.png")
+
+        pl2.hline()
+        pl2.legendOn()
+        pl2.done(pout_dir+out_dir+"_prof.png")
