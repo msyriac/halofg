@@ -34,6 +34,9 @@ for out_dir in args.OutDirs.split(','):
         cov = np.load(result_dir+"covmean.npy")
         inpstack = np.load(result_dir+"inpstack.npy")
         reconstack = np.load(result_dir+"reconstack.npy")
+        res_stack = inpstack - reconstack
+        np.save(result_dir+"res_stack.npy",res_stack)
+
         io.quickPlot2d(inpstack,pout_dir+out_dir+"_inpstack.png",lim=[-0.01,0.05])
         io.quickPlot2d(reconstack,pout_dir+out_dir+"_reconstack.png",lim=[-0.01,0.05])
         #inpstack = fmaps.filter_map(inpstack,inpstack*0.+1.,modlmap,lowPass=kellmax,highPass=kellmin)
