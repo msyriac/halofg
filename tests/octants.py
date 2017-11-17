@@ -40,13 +40,22 @@ df,ra,dec,m200_sehgal,z_sehgal = si.select_from_halo_catalog(PathConfig,SimConfi
 
 hcat = cats.HealpixCatMapper(nside,ra,dec)
 
-frames = 5
-phi = 0.
-thetas = np.linspace(0,30,frames)
-psi = 0.
+frames = 200
+# phi = 0.
+# thetas = np.linspace(0,30,frames)
+# psi = 0.
 
 
 hmap = hcat.counts
+hmap[hmap<1] = 0
+hmap[hmap>1] = 1
+
+target = tmap.sum()
+
+io.mollview(tmap,io.dout_dir+"tmap.png")
+io.mollview(hmap,io.dout_dir+"hmap.png")
+
+
 print "Rotating..."
 
 
@@ -58,19 +67,37 @@ fig, ax = plt.subplots()
 fig.set_tight_layout(True)
 
 # animation function
+eulers = []
 def animate(i):
-    theta = np.asarray(thetas[i])
-    alm=hp.map2alm(hmap)
-    hp.rotate_alm(alm,psi*np.pi/180.,theta*np.pi/180.,phi*np.pi/180.)
-    hmap_new=hp.alm2map(alm,nside=nside)
-    pltimage = io.mollview(tmap*300+hmap_new,return_projected_map=True)
+    #theta = np.asarray(thetas[i])
+    test = 0
+    
+    while test<0.98:
+        phi = np.random.uniform(0.,360.)
+        theta = np.random.uniform(0.,360.)
+        psi = np.random.uniform(0.,360.)
+    
+        alm=hp.map2alm(hmap)
+        hp.rotate_alm(alm,psi*np.pi/180.,theta*np.pi/180.,phi*np.pi/180.)
+        hmap_new=hp.alm2map(alm,nside=nside,verbose=False)
+
+        
+        test = np.sum(hmap_new*tmap)/target
+        
+        print test
+        print theta,phi,psi
+
+
+    print "Passed"
+    eulers.append((phi,theta,psi))
+    pltimage = io.mollview(tmap*2+hmap_new,return_projected_map=True)
     cont = ax.imshow(np.flipud(pltimage))
-    print phi
     return cont  
 
 anim = animation.FuncAnimation(fig, animate, frames=np.arange(0,frames),interval=400)
  
 anim.save(io.dout_dir+'hcat.gif', dpi=80, writer='imagemagick')
+io.save_cols("eulers_98percent.txt",eulers)
 
 
 
