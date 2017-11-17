@@ -19,8 +19,11 @@ parser = argparse.ArgumentParser(description='Save cutouts from Sehgal et. al. s
 parser.add_argument("Out", type=str,help='Output Directory Name (not path, that\'s specified in ini')
 parser.add_argument("Bin", type=str,help='Section of ini specifying mass/z bin from catalog')
 parser.add_argument("MapType", type=str,help='kappa/tsz/ksz/radio/cib')
+parser.add_argument("-r", "--random", action='store_true',help='Random.')
 
 args = parser.parse_args()
+
+random = args.random
 
 SimConfig = io.config_from_file("input/sehgal.ini")
 PathConfig = io.load_path_config()
@@ -60,7 +63,7 @@ else:
     hp_map = si.get_component_map_from_config(PathConfig,SimConfig,args.MapType,base_nside=None)
 
 
-Npix,arc,pix =  si.pix_from_config(SimConfig,cutout_section="cutout_default")
+Npix,arc,pix =  si.pix_from_config(SimConfig,cutout_section="cutout_128")
 import time
 k = 0
 a = time.time()
@@ -76,8 +79,15 @@ comm.Barrier()
 
     
 for index in my_tasks:
-    
-    cutout = curved.cutout_gnomonic(hp_map, rot=(ra[index], dec[index]), coord='C', xsize=Npix, ysize=Npix,reso=pix)
+
+    if random:
+        ra_now = np.random.uniform(0.,90.)
+        dec_now = np.random.uniform(0.,90.)
+    else:
+        ra_now = ra[index]
+        dec_now = dec[index]
+
+    cutout = curved.cutout_gnomonic(hp_map, rot=(ra_now, dec_now), coord='C', xsize=Npix, ysize=Npix,reso=pix)
     cutout = np.asarray(cutout.astype(np.float32))
     mpibox.add_to_stack(args.MapType,cutout)
     np.save(save_dir+"cutout_"+args.MapType+"_"+str(index),cutout)
@@ -97,3 +107,4 @@ mpibox.get_stacks()
 if rank==0:
 
     io.quickPlot2d(mpibox.stacks[args.MapType],plot_dir+args.MapType+"_"+args.Bin+"_stack.png")
+    logging.info("Done!")

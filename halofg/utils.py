@@ -13,7 +13,7 @@ class HaloFgPipeline(object):
 
     def __init__(self,PathConfig,inp_dir,out_dir,Nmax,analysis_section,sims_section,recon_section,cutout_section,catalog_bin,
                  experimentX,experimentY,components,recon_config_file="input/recon.ini",
-                 sim_config_file="input/sehgal.ini",mpi_comm=None,cosmology_section="cc_cluster",
+                 sim_config_file="input/sehgal.ini",mpi_comm=None,cosmology_section="cc_sehgal",
                  gradcut=2000,bin_edges=None,verbose=False,skip_recon=False):
         
         self.Config = io.config_from_file(recon_config_file)
@@ -154,7 +154,7 @@ class HaloFgPipeline(object):
                                             doCurl=False,
                                             TOnly=True,
                                             halo=True,
-                                            uEqualsL=True,
+                                            uEqualsL=False,
                                             gradCut=gradcut,verbose=False,
                                             bigell=lmax)
 
@@ -172,25 +172,41 @@ class HaloFgPipeline(object):
     def get_unlensed(self,seed):
         return self.psim.get_unlensed_cmb(seed=seed)
 
-    def get_kappa(self,index,stack=False):
-        #retmap = np.load(self.map_root+"kappa_"+str(index)+".npy").astype(np.float64)
-        #assert np.all(retmap.shape==self.kshape)
+    def get_kappa(self,index,stack=False,filter_inp=True):
+        #kappa_file = self.map_root+"kappa_"+str(index)+".npy"
+        #kappa_file = "/global/cscratch1/sd/msyriac/data/depot/halofg/run5_Nov5_cutout_128/arc_2/sehgal_bin_1/inpstack.npy"
+        #kappa_file = "/global/cscratch1/sd/msyriac/data/depot/halofg/run5_Nov5_cutout_128_random/nfw_test/sehgal_bin_1/inpstack.npy"
+        kappa_file = "/global/cscratch1/sd/msyriac/data/sims/sehgal/run5_Nov5_cutout_128_random/sehgal_bin_1/cutout_kappa_"+str(index)+".npy"
 
+        retmap = np.load(kappa_file).astype(np.float64)
+        assert np.all(retmap.shape==self.kshape)
+            
+
+
+        # taper_percent = 24.0
+        # pad_percent = 4.0
+        # Ny,Nx = self.kshape
+        # taper = fmaps.cosineWindow(Ny,Nx,lenApodY=int(taper_percent*min(Ny,Nx)/100.),lenApodX=int(taper_percent*min(Ny,Nx)/100.),padY=int(pad_percent*min(Ny,Nx)/100.),padX=int(pad_percent*min(Ny,Nx)/100.))
+
+        # retmap *= taper
+
+        # modrmap = enmap.modrmap(self.kshape,self.kwcs)
+        # retmap[modrmap>60.*np.pi/180./60.] = 0.
         from alhazen.halos import nfw_kappa
-        retmap = nfw_kappa(2.e13,self.psim.modrmap,self.psim.cc,zL=0.7,concentration=3.2,overdensity=500.,critical=True,atClusterZ=True)
+        retmap += nfw_kappa(2.e13,enmap.modrmap(self.kshape,self.kwcs),self.psim.cc,zL=0.7,concentration=3.2,overdensity=500.,critical=True,atClusterZ=True)
+
+        modlmap = enmap.modlmap(self.kshape,self.kwcs)
+        if filter_inp:
+            retmap = enmap.ndmap(fmaps.filter_map(retmap,retmap*0.+1.,modlmap,lowPass=self.kellmax,highPass=self.kellmin),self.kwcs)
 
         if stack:
             self.mpibox.add_to_stack("inpstack",retmap)
         return retmap
         
-    def upsample(self,imap,filter_inp=True):
+    def upsample(self,imap):
         upstamp = enmap.ndmap(resample.resample_fft(imap,self.psim.shape),self.psim.wcs) if imap.shape!=self.psim.shape \
                   else enmap.ndmap(imap,self.psim.wcs)
-        if filter_inp:
-            return enmap.ndmap(fmaps.filter_map(upstamp,upstamp*0.+1.,self.psim.modlmap,lowPass=self.kellmax,highPass=self.kellmin),self.psim.wcs)
-        else:
-            return upstamp 
-
+        return upstamp
 
     def get_lensed(self,unlensed,kappa):
         phi = lt.kappa_to_phi(kappa,self.psim.modlmap,return_fphi=False)
@@ -244,20 +260,18 @@ class HaloFgPipeline(object):
         io.mkdir(self.result_dir)
 
         reconstack = self.mpibox.stacks['reconstack']
-        inpstack = self.mpibox.stacks['inpstack']
         
         io.quickPlot2d(reconstack,self.plot_dir+"reconstack.png")
-        io.quickPlot2d(inpstack,self.plot_dir+"inpstack.png")
         for comp in self.components:
             io.quickPlot2d(self.mpibox.stacks[comp],self.plot_dir+comp+"_stack.png")
 
+        np.save(self.result_dir+"reconstack.npy",reconstack)
 
-            
+        inpstack = self.mpibox.stacks['inpstack']
+        io.quickPlot2d(inpstack,self.plot_dir+"inpstack.png")
         if (inpstack.shape!=self.pdatX.shape): inpstack = enmap.ndmap(resample.resample_fft(inpstack,self.pdatX.shape),self.pdatX.wcs)
         inpstack = fmaps.filter_map(inpstack,inpstack*0.+1.,self.pdatX.modlmap,lowPass=self.kellmax,highPass=self.kellmin)
-        
         np.save(self.result_dir+"inpstack.npy",inpstack)
-        np.save(self.result_dir+"reconstack.npy",reconstack)
         inp_profile = self.profile(inpstack)
             
         io.save_cols(self.result_dir+"profile.txt",(self.cents,

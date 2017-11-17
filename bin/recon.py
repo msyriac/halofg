@@ -37,6 +37,7 @@ observe = lambda imap,XY,seed: pipe.beam(XY,imap)+pipe.get_noise(XY,seed=seed)
 
 # Loop through clusters
 for k,cluster_id in enumerate(pipe.clusters):
+    input_kappa = pipe.upsample(pipe.get_kappa(cluster_id,stack=True))
     if args.read_cache:
         try:
             lensed = pipe.load_cached(cluster_id)
@@ -49,7 +50,6 @@ for k,cluster_id in enumerate(pipe.clusters):
     if not(loaded_cache): # do lensing if not
         if pipe.rank==0 and k==0: pipe.logger.info( "Did not load cached lensed CMB.")
         unlensed = pipe.get_unlensed(seed=cluster_id)
-        input_kappa = pipe.upsample(pipe.get_kappa(cluster_id,stack=True))
         lensed = pipe.downsample(pipe.get_lensed(unlensed,input_kappa))
     if args.write_cache and not(loaded_cache):
         pipe.save_cache(lensed,cluster_id)

@@ -26,6 +26,23 @@ SimConfig = io.config_from_file("input/sehgal.ini")
 PathConfig = io.load_path_config()
 pout_dir = PathConfig.get("paths","plots")
 
+from orphics.tools.stats import bin2D
+
+import alhazen.io as aio
+recon_config_file="input/recon.ini"
+Config = io.config_from_file(recon_config_file)
+section = "analysis_arc"
+shape,wcs = aio.enmap_from_config_section(Config,section,pol=False)
+modrmap = enmap.modrmap(shape,wcs)
+analysis_resolution =  np.min(enmap.extent(shape,wcs)/shape[-2:])*60.*180./np.pi
+bin_edges = np.arange(0.,10.,2.*analysis_resolution)
+binner = stats.bin2D(modrmap*60.*180./np.pi,bin_edges)
+def profile(imap2d):
+    cents,imap1d = binner.bin(imap2d)
+    return imap1d
+    
+
+
 for out_dir in args.OutDirs.split(','):
     for k in range(1,5):
         catalog_bin = "sehgal_bin_"+str(k)
@@ -34,12 +51,17 @@ for out_dir in args.OutDirs.split(','):
         cov = np.load(result_dir+"covmean.npy")
         inpstack = np.load(result_dir+"inpstack.npy")
         reconstack = np.load(result_dir+"reconstack.npy")
+        result_dir2 = PathConfig.get("paths","output_data")+args.InpDir+"/arc_2/"+catalog_bin+"/"
+        reconstack += np.load(result_dir2+"res_stack.npy")
+
         io.quickPlot2d(inpstack,pout_dir+out_dir+"_inpstack.png",lim=[-0.01,0.05])
         io.quickPlot2d(reconstack,pout_dir+out_dir+"_reconstack.png",lim=[-0.01,0.05])
         #inpstack = fmaps.filter_map(inpstack,inpstack*0.+1.,modlmap,lowPass=kellmax,highPass=kellmin)
         #cents2,inp = binner.bin(inpstack)
         #assert np.all(np.isclose(cents,cents2))
 
+
+        recon = profile(reconstack)
         
         errs = np.sqrt(np.diagonal(cov))
         print errs
