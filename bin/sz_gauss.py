@@ -29,6 +29,8 @@ N = 100
 
 freqs = np.array([90.,148.,220.,353.])
 noises = np.array([1.,1.,1.,1.])/100.
+# freqs = np.array([90.,148.])
+# noises = np.array([1.,1.])/100.
 beam = 1.4
 beams = beam *148./freqs
 kbeams = []
@@ -47,12 +49,9 @@ bin_edges = np.arange(30,6000,40)
 binner = stats.bin2D(modlmap,bin_edges)
 
 
-components = ['tsz']
+components = ['tsz','cibc','cibp']
 fgen = fgGenerator(shape,wcs,components,fgs)
 
-# y = 1.e-6
-# ps_sz = ((y*np.pi/180./60.)**2.+ells*0.).reshape((1,1,ells.size))
-# sz_mg = maps.MapGen(shape,wcs,ps_sz)
 
 
 
@@ -78,10 +77,11 @@ kmask = maps.mask_kspace(shape,wcs, lmin = None, lmax = 6000)
 for i in range(N):
 
     cmb = mg.get_map()
-    szmaps = fgen.get_maps("tsz",freqs)
+    fgmaps = []
+    for component in components:
+        fgmaps.append( fgen.get_maps(component,freqs) )
+    fgmaps = np.stack(fgmaps).sum(axis=0)
 
-    clean_cmbs = []
-    unclean_cmbs = []
 
     p2d_cleans = []
     p2d_uncleans = []
@@ -89,34 +89,22 @@ for i in range(N):
     
     pl = io.Plotter(yscale="log")
     for k,(kbeam,freq,mg_noise) in enumerate(zip(kbeams,freqs,mg_noises)):
-        sz = szmaps[k]
-        bcmb = maps.filter_map(cmb,kbeam)
-        bsz = maps.filter_map(sz,kbeam)
+        fg = fgmaps[k,:,:]
+        bcmb = maps.filter_map(cmb+fg,kbeam)
         noise_map = mg_noise.get_map()
+        unclean = bcmb+noise_map
 
-        clean = bcmb+noise_map
-        unclean = bcmb+bsz+noise_map
-        clean_cmbs.append(clean)
-        unclean_cmbs.append(unclean)
-
-        p2dclean,kclean,_ = fc.power2d(clean)
-        p2dclean /= kbeam**2.
-        kclean *= np.nan_to_num(kmask/kbeam)
         p2dunclean,kunclean,_ = fc.power2d(unclean)
         p2dunclean /= kbeam**2.
         kunclean *= np.nan_to_num(kmask/kbeam)
-        p2d_cleans.append(p2dclean)
         p2d_uncleans.append(p2dunclean)
 
-        cents, p1dclean = binner.bin(p2dclean)
         cents, p1dunclean = binner.bin(p2dunclean)
 
         kuncleans.append(kunclean)
         
-        #pl.add(cents,p1dclean*cents**2.)
         pl.add(cents,p1dunclean*cents**2.,alpha=0.4,label=str(freq))
         
-        unclean_cmbs.append(unclean)
 
 
     kuncleans = np.stack(kuncleans)
@@ -129,7 +117,7 @@ for i in range(N):
     pl._ax.set_xlim(2,6000)
     pl.legend()
     pl.done("cls.png")
-    io.plot_img(unclean_cmbs[-1],"unclean.png",lim=[-300,300])
+    io.plot_img(unclean,"unclean.png",lim=[-300,300])
     io.plot_img(fft.ifft(kcleaned,axes=[-2,-1],normalize=True).real,"cleaned.png",lim=[-300,300])
     sys.exit()
 
