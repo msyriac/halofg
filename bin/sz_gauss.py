@@ -27,10 +27,10 @@ TCMB = 2.27255e6
 N = 100
 
 
-freqs = np.array([90.,148.,220.,353.])
-noises = np.array([1.,1.,1.,1.])/100.
-# freqs = np.array([90.,148.])
-# noises = np.array([1.,1.])/100.
+# freqs = np.array([90.,148.,220.,353.])
+# noises = np.array([1.,1.,1.,1.])/100.
+freqs = np.array([90.,148.])
+noises = np.array([1.,1.])/100.
 beam = 1.4
 beams = beam *148./freqs
 kbeams = []
@@ -49,7 +49,7 @@ bin_edges = np.arange(30,6000,40)
 binner = stats.bin2D(modlmap,bin_edges)
 
 
-components = ['tsz','cibc','cibp']
+components = ['tsz']#,'cibc','cibp']
 fgen = fgGenerator(shape,wcs,components,fgs)
 
 
@@ -64,8 +64,7 @@ for i,(kbeam1,freq1,noise1) in enumerate(zip(kbeams,freqs,noises)):
         if i==j:
             Covmat[i,j,:,:] += modlmap*0.+(noise1*np.pi/180./60.)**2./kbeam1**2.
         for component in components:
-            Covmat[i,j,:,:] += fgen.get_noise(component,freq1,freq2)
-        #(TCMB*(y*np.pi/180./60.)*f_nu(const,freq1))*(TCMB*(y*np.pi/180./60.)*f_nu(const,freq2))+
+            Covmat[i,j,:,:] += fgen.get_noise(component,freq1,freq2,modlmap)
 
 
 cinv = np.linalg.inv(Covmat.T).T
@@ -109,7 +108,7 @@ for i in range(N):
 
     kuncleans = np.stack(kuncleans)
 
-    kcleaned = np.einsum('klij,lij->kij',cinv,kuncleans).sum(axis=0) / cinv.sum(axis=(0,1))
+    kcleaned = maps.ilc_cmb(kuncleans,cinv)
     p2d_cleaned = fc.f2power(kcleaned,kcleaned)
     cents, p1dcleaned = binner.bin(p2d_cleaned)
     pl.add(cents,p1dcleaned*cents**2.,ls="none",marker="o")
@@ -129,31 +128,16 @@ def make_cinv(cmb2d,kbeams,freqs,noises,const_dict=cosmology.defaultConstants):
     """
 
     nfreqs = len(noises)
-    Covmat = np.tile(cmb2d,(nfreqs,nfreqs,1,1))
+    cmb2d = theory.lCl('TT',modlmap)
+    Covmat = np.tile(cmb2d,(nfreqs,nfreqs,1,1))#,modlmap.shape[0],modlmap.shape[1]))
 
     for i,(kbeam1,freq1,noise1) in enumerate(zip(kbeams,freqs,noises)):
         for j,(kbeam2,freq2,noise2) in enumerate(zip(kbeams,freqs,noises)):
             if i==j:
                 Covmat[i,j,:,:] += modlmap*0.+(noise1*np.pi/180./60.)**2./kbeam1**2.
-            Covmat[i,j,:,:] += (TCMB*(y*np.pi/180./60.)*f_nu(const,freq1))*(TCMB*(y*np.pi/180./60.)*f_nu(const,freq2))+modlmap*0.
+            for component in components:
+                Covmat[i,j,:,:] += fgen.get_noise(component,freq1,freq2,modlmap)
 
 
     cinv = np.linalg.inv(Covmat.T).T
     print(cinv.shape)
-
-    
-def ilc_cmb(kmaps,cinv):
-    """Clean a set of microwave observations using ILC to get an estimate of the CMB map.
-    
-    Accepts
-    -------
-
-    kmaps -- (nfreq,Ny,Nx) array of beam-deconvolved fourier transforms at each frequency
-    cinv -- (nfreq,nfreq,Ny,Nx) array of the inverted covariance matrix
-
-    Returns
-    -------
-
-    Fourier transform of CMB map estimate, (Ny,Nx) array 
-    """
-    return np.einsum('klij,lij->kij',cinv,kmaps).sum(axis=0) / cinv.sum(axis=(0,1))
