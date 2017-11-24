@@ -28,7 +28,7 @@ mg = maps.MapGen(shape,wcs,ps)
 modrmap = enmap.modrmap(shape,wcs)
 modlmap = enmap.modlmap(shape,wcs)
 sigma_rad = 2.0*np.pi/180./60.
-y = 1.e-4 * np.exp(-modrmap**2./2./sigma_rad**2.)
+y = 2.e-4 * np.exp(-modrmap**2./2./sigma_rad**2.)
 TCMB = 2.27255e6
 
 N = 1000
@@ -36,12 +36,11 @@ N = 1000
 
 # WHY DO WE NEED FREQS TO SPAN 220 TO GET LOW RESIDUALS?
 
-freqs = np.array([90.,148.,350.])
-noises = np.array([1.,1.,1.])*3./2.
-# freqs = np.array([90.,148.])#,220.])
-# noises = np.array([1.,1.])/100.#,20.])
+# freqs = np.array([90.,148.,350.])
+# noises = np.array([1.,1.,1.])*3./2.
+freqs = np.array([90.,148.])#,220.])
+noises = np.array([1.,1.])/100.#,20.])
 beam = 1.4
-#beams = [beam]*len(freqs)
 beams = beam *148./freqs
 kbeams = [maps.gauss_beam(modlmap,abeam) for abeam in beams]
 
@@ -77,7 +76,7 @@ for i in range(N):
     imap = mg.get_map()
     kuncleans = []
     for kbeam,freq,mg_noise in zip(kbeams,freqs,mg_noises):
-        sz = TCMB*y*f_nu(const,freq)
+        sz = TCMB*y* f_nu(const,freq)
         imap_freq = imap+sz
         imap_freq = maps.filter_map(imap_freq,kbeam)
         noise_map = mg_noise.get_map()
@@ -88,11 +87,12 @@ for i in range(N):
         io.plot_img(imap_freq,"map"+str(freq)+".png",lim=[-300,300])
         
     kuncleans = np.stack(kuncleans)
-    kcleaned = maps.ilc_cmb(kuncleans,cinv)
+    kcleaned = maps.ilc(kuncleans,cinv)
     cleaned = fft.ifft(kcleaned,axes=[-2,-1],normalize=True).real
     stack += cleaned
     io.plot_img(cleaned,"map_cleaned.png",lim=[-300,300])
     io.plot_img(imap,"map_clean.png",lim=[-300,300])
+    io.plot_img(imap-cleaned,"map_diff.png")
         
     sys.exit()
     if i%10==0: print (i)
