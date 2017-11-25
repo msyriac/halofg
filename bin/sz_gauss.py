@@ -11,12 +11,6 @@ theory_file_root = "data/Aug6_highAcc_CDM"
 theory = cosmology.loadTheorySpectraFromCAMB(theory_file_root,unlensedEqualsLensed=False,
                                                     useTotal=False,TCMB = 2.7255e6,lpad=9000,get_dimensionless=False)
 
-
-fgs = fgNoises(const,ksz_file='../szar/input/ksz_BBPS.txt',ksz_p_file='../szar/input/ksz_p_BBPS.txt',tsz_cib_file='../szar/input/sz_x_cib_template.dat',ksz_battaglia_test_csv=None,tsz_battaglia_template_csv="../szar/data/sz_template_battaglia.csv")
-
-
-
-
 shape,wcs = maps.rect_geometry(width_deg=10.,px_res_arcmin=2.0)
 modlmap = enmap.modlmap(shape,wcs)
 lmax = np.max(modlmap)
@@ -56,27 +50,19 @@ binner = stats.bin2D(modlmap,bin_edges)
 
 
 components = ['tsz']#,'cibc','cibp']
-fgen = fgGenerator(shape,wcs,components,fgs)
+
+
+fnoises = fgNoises(const,ksz_file='../szar/input/ksz_BBPS.txt',ksz_p_file='../szar/input/ksz_p_BBPS.txt',tsz_cib_file='../szar/input/sz_x_cib_template.dat',ksz_battaglia_test_csv=None,tsz_battaglia_template_csv="../szar/data/sz_template_battaglia.csv",components=components,lmax=6000)
+
+fgen = fgGenerator(shape,wcs,components,const,ksz_file='../szar/input/ksz_BBPS.txt',ksz_p_file='../szar/input/ksz_p_BBPS.txt',tsz_cib_file='../szar/input/sz_x_cib_template.dat',ksz_battaglia_test_csv=None,tsz_battaglia_template_csv="../szar/data/sz_template_battaglia.csv")
 
 
 
 
-# nfreqs = len(noises)
 cmb2d = theory.lCl('TT',modlmap)
-# Covmat = np.tile(cmb2d,(nfreqs,nfreqs,1,1))#,modlmap.shape[0],modlmap.shape[1]))
-
-# for i,(kbeam1,freq1,noise1) in enumerate(zip(kbeams,freqs,noises)):
-#     for j,(kbeam2,freq2,noise2) in enumerate(zip(kbeams,freqs,noises)):
-#         if i==j:
-#             Covmat[i,j,:,:] += modlmap*0.+(noise1*np.pi/180./60.)**2./kbeam1**2.
-#         for component in components:
-#             Covmat[i,j,:,:] += fgen.get_noise(component,freq1,freq2,modlmap)
-
-
-# cinv = np.linalg.inv(Covmat.T).T
 wnoises = (noises*np.pi/180./60.)**2.
 cinv = maps.ilc_cinv(modlmap,cmb2d,kbeams,freqs,wnoises,components,fgen)
-cinv_1d = maps.ilc_cinv(ells,cmb_ps_1d,kbeams1d,freqs,wnoises,components,fgen)
+cinv_1d = maps.ilc_cinv(ells,cmb_ps_1d,kbeams1d,freqs,wnoises,components,fnoises)
 print(cinv.shape)
 
 kmask = maps.mask_kspace(shape,wcs, lmin = None, lmax = 6000)
