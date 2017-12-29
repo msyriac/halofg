@@ -1,5 +1,36 @@
-import healpy as hp
+from __future__ import print_function
+from orphics import maps #,io,cosmology
+from enlib import enmap
 import numpy as np
+import os,sys
+import healpy as hp
+
+class StampReader(object):
+
+    def __init__(self,PathConfig,SimConfig,cutout_section,sections,suffix="car_half_arcmin"):
+        self.Config = SimConfig
+        self.map_root = PathConfig.get("paths","input_data")
+        Npix,arcwidth,pix = pix_from_config(self.Config,cutout_section)
+        self.istack = maps.InterpStack(arcwidth,pix,proj="car")
+        self.shapes = {}
+        self.wcss = {}
+        self.mults = {}
+        for section in sections:
+            map_name = self.map_root+self.Config.get(section,"file")[:-5]+"_car_0.5_55.0.fits"
+            self.shapes[section],self.wcss[section] = enmap.read_map_geometry(map_name)
+            if section=="kappa":
+                self.mults[section] = 1.
+            else:
+                calib = self.Config.getfloat(section,"calibration")
+                units = self.Config.getfloat(section,"unit_conversion")
+                self.mults[section] = calib*units
+
+
+    def get_stamp(self,section,ra,dec,**kwargs):
+        map_name = self.map_root+self.Config.get(section,"file_car")
+        return self.istack.cutout_from_file(map_name,self.shapes[section],self.wcss[section],ra,dec,**kwargs)*self.mults[section]
+    
+
 
 def pix_from_config(SimConfig,cutout_section="cutout_default"):
     arc = SimConfig.getfloat(cutout_section,"arc")
@@ -122,12 +153,12 @@ def select_from_halo_catalog_dataframe(df_in,M200_min=-np.inf,M200_max=np.inf,z_
     try:
         df = df[sel].sample(Nmax,replace=False) if ((Nmax is not None) and Nmax<df['Z'].size) else df[sel]
     except:
-        print Nmax
-        print df['Z'].size
-        print df[sel]['Z'].size
-        print M200_min,M200_max
-        print z_min,z_max
-        print "ERROR: NOT ENOUGH TO SAMPLE FROM"
+        print (Nmax)
+        print (df['Z'].size)
+        print (df[sel]['Z'].size)
+        print (M200_min,M200_max)
+        print (z_min,z_max)
+        print ("ERROR: NOT ENOUGH TO SAMPLE FROM")
         sys.exit()
 
     
