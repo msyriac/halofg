@@ -23,8 +23,8 @@ cltt = theory.lCl('TT',ells)
 comp = {}
 labels = ['tsz','radpts','irpts'] #,'ksz'
 colors = ['C0','C1','C2']
-#cals = [1.3,1.,0.8]
-cals = [1.,1.,1.]
+cals = [1.3,1.,0.8]
+#cals = [1.,1.,1.]
 for k,(label,color,cal) in enumerate(zip(labels,colors,cals)):
     print (label)
     imap = enmap.read_map("/gpfs01/astro/workarea/msyriac/data/sims/sehgal/cache/sehgal_d56_148_"+label+".hdf")
@@ -48,7 +48,7 @@ for k,(label,color,cal) in enumerate(zip(labels,colors,cals)):
 
 
 components = ['tsz','cibp','cibc','radps']
-fnoises = fgNoises(const,ksz_file='../szar/input/ksz_BBPS.txt',ksz_p_file='../szar/input/ksz_p_BBPS.txt',tsz_cib_file='../szar/input/sz_x_cib_template.dat',ksz_battaglia_test_csv=None,tsz_battaglia_template_csv="../szar/data/sz_template_battaglia.csv",components=components,lmax=10000)
+fnoises = fgNoises(const,ksz_file='../szar/input/ksz_BBPS.txt',ksz_p_file='../szar/input/ksz_p_BBPS.txt',tsz_cib_file='../szar/input/sz_x_cib_template.dat',ksz_battaglia_test_csv=None,tsz_battaglia_template_csv="../szar/input/sz_template_battaglia.csv",components=components,lmax=10000)
 
     
 nl = fnoises.get_noise("tsz",148.,148.,ells)
