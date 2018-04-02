@@ -25,6 +25,8 @@ args = parser.parse_args()
 
 random = args.random
 
+np.random.seed(2)
+
 SimConfig = io.config_from_file("input/sehgal.ini")
 PathConfig = io.load_path_config()
 
@@ -49,6 +51,8 @@ Nuse = len(ra)
 ra = ra.tolist()
 dec = dec.tolist()
 
+print ra[0]
+sys.exit()
 
 num_each,each_tasks = mpi_distribute(Nuse,numcores)
 # Initialize a container for stats and stacks

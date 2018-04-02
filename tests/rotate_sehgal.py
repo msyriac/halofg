@@ -18,7 +18,8 @@ print psi, theta, phi
 with bench.show("hpmap load"):
     hp_map = si.get_component_map_from_config(PathConfig,SimConfig,"148_ksz",base_nside=None)
 
-nside = 8192
+with bench.show("hpmap load"):                                                                                                                          hp_map = hp.ud_grade(hp_map,4096)                                                                                                                
+nside = 4096         
 
 with bench.show("alm"):
     alm=hp.map2alm(hp_map)
