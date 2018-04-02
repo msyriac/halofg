@@ -97,7 +97,7 @@ def animate(i):
 anim = animation.FuncAnimation(fig, animate, frames=np.arange(0,frames),interval=400)
  
 anim.save(io.dout_dir+'hcat.gif', dpi=80, writer='imagemagick')
-io.save_cols("eulers_98percent.txt",eulers)
+# io.save_cols("eulers_98percent.txt",eulers)
 
 
 
